@@ -33,22 +33,27 @@ graph TD
 
 ## ✨ Key Features
 
-### 1. Ingest & Planning (Basecamp Mode)
-* **GPX Upload:** Directly upload any standard GPX route containing track points or waypoints.
+### 1. Ingest, Planning & POI Fetching (Basecamp Mode)
+* **GPX Ingestion:** Directly parse track files, extract metadata, and calculate cumulative distances/elevations.
+* **OSM Overpass API Integration:** Pulls nearby Points of Interest (POIs) such as drinking water, alpine huts, campsites, viewpoints, and emergency phones directly from OpenStreetMap.
+* **Custom Buffer Filter:** Filters POIs locally using the haversine formula to only retain those within a 150m buffer of the trail.
+* **Enhanced GPX Export:** Saves fetched POIs into standard GPX `<extensions>` and `<wpt>` tags to be stored on disk and read offline.
 * **OpenRouteService (ORS) Routing:** Generate custom route segments between coordinates using the OSM-based ORS API (requires API key, planning phase only).
 
-### 2. Tactical HUD & Route Metrics
-* **Elevation Profile Smoothing:** Applies a moving-average window and noise threshold to eliminate GPX vertical jitter and provide realistic elevation gain/loss sums.
-* **Naismith's Rule Estimator:** Calculates estimated trekking time assuming a 5 km/h base speed plus 1 hour per 600m of ascent, helping you plan realistic daily splits.
-* **Interactive Map:** Built using `folium`, mapping out the route, checkpoints, and waypoints securely inside a sandboxed iframe.
+### 2. Tactical HUD & Trek Simulation
+* **Flicker-Free Client-Side Map:** Renders a native Leaflet canvas directly within the Gradio container. State synchronization from textboxes coordinates updates smoothly in real time without iframe refreshes.
+* **Color-Coded Vector Markers:** Custom circle-markers are drawn for POIs (Blue = water, Green = huts, Orange = campsite, Purple = viewpoints, Red = emergency phone) to avoid external asset requests.
+* **Playback Simulation Player:** Play, pause, speed slider, and reset state controller updates the hiker's current position along the trail.
+* **Live HUD Dashboard:** Telemetry tracking route completion percentage, cumulative distance hiked, current altitude, and next-checkpoint ETA.
+* **Offline Proximity Alerts:** Audio-visual indicators triggered automatically when the hiker is within 150m of any filtered POI.
 
-### 3. Contextual Wilderness Guide AI
-* **In-Process LLM:** Powered by `google_gemma-4-E2B-it-GGUF` running locally on your device or server CPU via `llama-cpp-python`.
-* **Proximity Checkpoint Narration:** Provides real-time terrain updates, safety advice, and target destination briefings as you approach waypoints.
-* **First-Aid RAG Field Guide:** Retreives localized wilderness first-aid procedures and references corresponding guide sections under extreme constraints.
-* **Rule-Based Risk Advisory:** Analyzes remaining daylight, current altitude (AMS detection), and weather to prompt warnings (e.g. recommending alternative campsites if pace degrades).
+### 3. Contextual Wilderness Guide AI & First-Aid RAG
+* **Wilderness First-Aid Manual:** Formulated manual (`first_aid_guide.json`) containing 5 key backcountry sections (bleeding, hypothermia, heat stroke, altitude illness, musculoskeletal injuries).
+* **Keyword RAG Search:** Local keyword intersection retriever indexes the guide and returns relevant instructions citing specific manual sections.
+* **In-Process LLM:** Powered by local GGUF models running via `llama-cpp-python`.
+* **Proximity Checkpoint Narration:** Provides terrain updates, safety advice, and target destination briefings as you approach checkpoints.
 
-### 4. Offline Voice Journal & Post-Trek Reports
+### 4. Offline Voice Journal & Post-Trek Reports (Roadmap)
 * **ASR Voice Logs:** Dictate logs hands-free in the cold using `pywhispercpp` (whisper.cpp tiny). Logs transcribing audio, time, and coordinates are saved directly to SQLite.
 * **Post-Trek Storyteller:** Converts your journal entries and raw GPS points into an AI-narrated story artifact.
 
