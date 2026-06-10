@@ -1,3 +1,13 @@
+---
+title: Trailhead
+emoji: 🌲
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # 🌲 Trailhead — Tactical Trail Computer & Route Planner
 
 [![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces)
