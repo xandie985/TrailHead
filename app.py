@@ -16,15 +16,35 @@ PRELOADED_ROUTE_PATH = r"C:\Users\skushwaha\Documents\hckthn\TrailHead\Routes\tr
 
 MAP_HTML_INITIALIZER = """
 <div id="trailhead-leaflet-map" style="height: 520px; width: 100%; border:1px solid rgba(245,158,11,0.2); border-radius: 12px; background: #0c1014; z-index: 1;"></div>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-(function() {
+"""
+
+MAP_INIT_JS = r"""
+() => {
+    // 1. Dynamically append Leaflet CSS
+    if (!document.getElementById("leaflet-css")) {
+        var link = document.createElement("link");
+        link.id = "leaflet-css";
+        link.rel = "stylesheet";
+        link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+        document.head.appendChild(link);
+    }
+
+    // 2. Dynamically append Leaflet JS
+    if (!document.getElementById("leaflet-js")) {
+        var script = document.createElement("script");
+        script.id = "leaflet-js";
+        script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+        document.head.appendChild(script);
+    }
+
+    // 3. Wait for Leaflet to load and initialize map
     var checkExist = setInterval(function() {
         if (typeof L !== 'undefined' && L.map) {
-            clearInterval(checkExist);
             var mapContainer = document.getElementById("trailhead-leaflet-map");
-            if (!mapContainer || window.myLeafletMap) return;
+            if (!mapContainer) return; // Wait for Gradio to mount the container
+            
+            clearInterval(checkExist);
+            if (window.myLeafletMap) return; // Already initialized
             
             var map = L.map("trailhead-leaflet-map").setView([46.0734974, 11.1717214], 13);
             window.myLeafletMap = map;
@@ -36,150 +56,152 @@ MAP_HTML_INITIALIZER = """
             
             window.mapLayers = L.layerGroup().addTo(map);
             window.hikerMarker = null;
+
+            // Define window.routeDataChangeHandler
+            window.routeDataChangeHandler = function(routeJson) {
+                if (!routeJson) return;
+                try {
+                    var data = JSON.parse(routeJson);
+                    var map = window.myLeafletMap;
+                    if (!map) return;
+                    
+                    if (window.mapLayers) {
+                        window.mapLayers.clearLayers();
+                    }
+                    if (window.hikerMarker) {
+                        window.hikerMarker.remove();
+                        window.hikerMarker = null;
+                    }
+                    
+                    var points = data.points || [];
+                    var checkpoints = data.checkpoints || [];
+                    var pois = data.pois || [];
+                    
+                    if (points.length === 0) return;
+                    
+                    var latlngs = points.map(p => [p.lat, p.lon]);
+                    var polyline = L.polyline(latlngs, {
+                        color: "#f59e0b",
+                        weight: 5,
+                        opacity: 0.85
+                    }).addTo(window.mapLayers);
+                    
+                    map.fitBounds(polyline.getBounds());
+                    
+                    checkpoints.forEach(cp => {
+                        var color = "cadetblue";
+                        if (cp.name === "Start") color = "green";
+                        else if (cp.name === "End") color = "red";
+                        
+                        var popupText = `
+                        <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
+                            <b>${cp.name}</b><br>
+                            Distance: ${cp.cum_dist.toFixed(2)} km<br>
+                            Elevation: ${cp.ele.toFixed(1)} m
+                        </div>`;
+                        
+                        L.circleMarker([cp.lat, cp.lon], {
+                            radius: cp.name === "Start" || cp.name === "End" ? 8 : 6,
+                            fillColor: color,
+                            color: "#ffffff",
+                            weight: 1.5,
+                            fillOpacity: 0.9
+                        })
+                        .bindPopup(popupText)
+                        .addTo(window.mapLayers);
+                    });
+                    
+                    pois.forEach(poi => {
+                        var color = "purple";
+                        var type = poi.type;
+                        
+                        if (["drinking_water", "water_point", "fountain"].includes(type)) {
+                            color = "#3b82f6";
+                        } else if (type === "spring") {
+                            color = "#60a5fa";
+                        } else if (["alpine_hut", "wilderness_hut"].includes(type)) {
+                            color = "#047857";
+                        } else if (type === "camp_site") {
+                            color = "#f97316";
+                        } else if (type === "shelter") {
+                            color = "#10b981";
+                        } else if (type === "viewpoint") {
+                            color = "#a855f7";
+                        } else if (type === "peak") {
+                            color = "#7c3aed";
+                        } else if (type === "phone") {
+                            color = "#ef4444";
+                        }
+                        
+                        var popupText = `
+                        <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
+                            <b>${poi.name}</b><br>
+                            Type: ${type.replace(/_/g, ' ').toUpperCase()}<br>
+                            Distance to Route: ${poi.distance.toFixed(1)} m
+                        </div>`;
+                        
+                        L.circleMarker([poi.lat, poi.lon], {
+                            radius: 5,
+                            fillColor: color,
+                            color: "#ffffff",
+                            weight: 1.2,
+                            fillOpacity: 0.95
+                        })
+                        .bindPopup(popupText)
+                        .addTo(window.mapLayers);
+                    });
+                } catch(e) {
+                    console.error("Error drawing route:", e);
+                }
+            };
+
+            // Define window.updateHikerPosHandler
+            window.updateHikerPosHandler = function(coords) {
+                if (!coords) return;
+                try {
+                    var data = JSON.parse(coords);
+                    var map = window.myLeafletMap;
+                    if (!map) return;
+                    
+                    var pos = [data.lat, data.lon];
+                    
+                    if (!window.hikerMarker) {
+                        window.hikerMarker = L.circleMarker(pos, {
+                            radius: 9,
+                            fillColor: "#ef4444",
+                            color: "#ffffff",
+                            weight: 2.5,
+                            fillOpacity: 1.0
+                        }).addTo(map);
+                    } else {
+                        window.hikerMarker.setLatLng(pos);
+                    }
+                    
+                    var popupText = `
+                    <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
+                        <b>Current simulated position</b><br>
+                        Distance Walked: ${data.cum_dist.toFixed(2)} km<br>
+                        Altitude: ${data.ele.toFixed(1)} m
+                    </div>`;
+                    window.hikerMarker.bindPopup(popupText);
+                    map.panTo(pos);
+                } catch(e) {
+                    console.error("Error updating hiker position:", e);
+                }
+            };
+
+            // Trigger handlers immediately with any pending data
+            if (window.pendingRouteData) {
+                window.routeDataChangeHandler(window.pendingRouteData);
+            }
+            if (window.pendingHikerCoords) {
+                window.updateHikerPosHandler(window.pendingHikerCoords);
+            }
         }
     }, 100);
-
-    // Handler for new route data JSON
-    window.routeDataChangeHandler = function(routeJson) {
-        if (!routeJson) return;
-        try {
-            var data = JSON.parse(routeJson);
-            var map = window.myLeafletMap;
-            if (!map) {
-                setTimeout(() => window.routeDataChangeHandler(routeJson), 100);
-                return;
-            }
-            
-            if (window.mapLayers) {
-                window.mapLayers.clearLayers();
-            }
-            if (window.hikerMarker) {
-                window.hikerMarker.remove();
-                window.hikerMarker = null;
-            }
-            
-            var points = data.points || [];
-            var checkpoints = data.checkpoints || [];
-            var pois = data.pois || [];
-            
-            if (points.length === 0) return;
-            
-            // Draw track line
-            var latlngs = points.map(p => [p.lat, p.lon]);
-            var polyline = L.polyline(latlngs, {
-                color: "#f59e0b",
-                weight: 5,
-                opacity: 0.85
-            }).addTo(window.mapLayers);
-            
-            map.fitBounds(polyline.getBounds());
-            
-            // Draw checkpoints
-            checkpoints.forEach(cp => {
-                var color = "cadetblue";
-                if (cp.name === "Start") color = "green";
-                else if (cp.name === "End") color = "red";
-                
-                var popupText = `
-                <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
-                    <b>${cp.name}</b><br>
-                    Distance: ${cp.cum_dist.toFixed(2)} km<br>
-                    Elevation: ${cp.ele.toFixed(1)} m
-                </div>`;
-                
-                L.circleMarker([cp.lat, cp.lon], {
-                    radius: cp.name === "Start" || cp.name === "End" ? 8 : 6,
-                    fillColor: color,
-                    color: "#ffffff",
-                    weight: 1.5,
-                    fillOpacity: 0.9
-                })
-                .bindPopup(popupText)
-                .addTo(window.mapLayers);
-            });
-            
-            // Draw POIs
-            pois.forEach(poi => {
-                var color = "purple";
-                var type = poi.type;
-                
-                if (["drinking_water", "water_point", "fountain"].includes(type)) {
-                    color = "#3b82f6";
-                } else if (type === "spring") {
-                    color = "#60a5fa";
-                } else if (["alpine_hut", "wilderness_hut"].includes(type)) {
-                    color = "#047857";
-                } else if (type === "camp_site") {
-                    color = "#f97316";
-                } else if (type === "shelter") {
-                    color = "#10b981";
-                } else if (type === "viewpoint") {
-                    color = "#a855f7";
-                } else if (type === "peak") {
-                    color = "#7c3aed";
-                } else if (type === "phone") {
-                    color = "#ef4444";
-                }
-                
-                var popupText = `
-                <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
-                    <b>${poi.name}</b><br>
-                    Type: ${type.replace(/_/g, ' ').toUpperCase()}<br>
-                    Distance to Route: ${poi.distance.toFixed(1)} m
-                </div>`;
-                
-                L.circleMarker([poi.lat, poi.lon], {
-                    radius: 5,
-                    fillColor: color,
-                    color: "#ffffff",
-                    weight: 1.2,
-                    fillOpacity: 0.95
-                })
-                .bindPopup(popupText)
-                .addTo(window.mapLayers);
-            });
-        } catch(e) {
-            console.error("Error drawing route:", e);
-        }
-    };
-
-    // Handler for hiker updates
-    window.updateHikerPosHandler = function(coords) {
-        if (!coords) return;
-        try {
-            var data = JSON.parse(coords);
-            var map = window.myLeafletMap;
-            if (!map) return;
-            
-            var pos = [data.lat, data.lon];
-            
-            if (!window.hikerMarker) {
-                window.hikerMarker = L.circleMarker(pos, {
-                    radius: 9,
-                    fillColor: "#ef4444",
-                    color: "#ffffff",
-                    weight: 2.5,
-                    fillOpacity: 1.0
-                }).addTo(map);
-            } else {
-                window.hikerMarker.setLatLng(pos);
-            }
-            
-            var popupText = `
-            <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
-                <b>Current simulated position</b><br>
-                Distance Walked: ${data.cum_dist.toFixed(2)} km<br>
-                Altitude: ${data.ele.toFixed(1)} m
-            </div>`;
-            window.hikerMarker.bindPopup(popupText);
-            map.panTo(pos);
-        } catch(e) {
-            console.error("Error updating hiker position:", e);
-        }
-    };
-})();
-</script>
+}
 """
+
 
 EMERGENCY_CARD = """
 ## 🚨 IMMEDIATE BACKCOUNTRY EMERGENCY CARD (OFFLINE)
@@ -751,6 +773,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
         outputs=None,
         js="""
         (coords) => {
+            window.pendingHikerCoords = coords;
             if (window.updateHikerPosHandler) {
                 window.updateHikerPosHandler(coords);
             }
@@ -764,6 +787,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
         outputs=None,
         js="""
         (routeJson) => {
+            window.pendingRouteData = routeJson;
             if (window.routeDataChangeHandler) {
                 window.routeDataChangeHandler(routeJson);
             }
@@ -922,7 +946,8 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     demo.load(
         fn=handle_route_update,
         inputs=[preloaded_route, upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords],
+        js=MAP_INIT_JS
     )
     
     # Preloaded selection change
