@@ -1,0 +1,22 @@
+[
+  {
+    "section": "Section 1: Bleeding and Wound Management",
+    "text": "Control severe bleeding by applying direct pressure to the wound with a clean cloth or bandage. Keep the limb elevated. If bleeding does not stop after 10-15 minutes of continuous direct pressure, apply a tourniquet high and tight on the limb. Keep the wound clean using treated water. Cover with sterile dressings. Avoid direct contact with bodily fluids."
+  },
+  {
+    "section": "Section 2: Hypothermia and Frostbite",
+    "text": "Hypothermia occurs when the core body temperature drops below 35°C (95°F). Symptoms include shivering, confusion, and slurred speech. Treatment: Move the victim out of the wind/wet, replace wet clothing with dry layers, wrap in a space blanket or sleeping bag, and provide warm sweetened drinks if conscious. Frostbite: Do not rub the affected skin. Rewarm slowly in warm water (38-42°C)."
+  },
+  {
+    "section": "Section 3: Heat Exhaustion and Dehydration",
+    "text": "Heat exhaustion presents with heavy sweating, rapid pulse, dizziness, nausea, and headache. Dehydration worsens these symptoms. Treatment: Move the hiker to shade immediately, cool them down with wet cloths, and sip cool water with electrolytes. Do not allow rapid drinking. If they become confused or lose consciousness, it is Heat Stroke—a life-threatening emergency requiring rapid active cooling."
+  },
+  {
+    "section": "Section 4: Altitude Illnesses (AMS, HAPE, HACE)",
+    "text": "Acute Mountain Sickness (AMS) occurs above 2400 meters (8000 feet). Symptoms include headache, nausea, fatigue, and dizziness. Treatment: Stop ascending, rest, and hydrate. If symptoms do not improve within 24 hours, descend immediately. High Altitude Pulmonary Edema (HAPE) presents with breathlessness at rest and a cough. High Altitude Cerebral Edema (HACE) presents with confusion and loss of coordination (ataxia). Both HAPE and HACE are emergency conditions requiring immediate descent."
+  },
+  {
+    "section": "Section 5: Musculoskeletal Injuries (Sprains, Fractures)",
+    "text": "For ankle sprains or joint strains, follow the R.I.C.E. protocol: Rest the joint, Ice or apply cold pack (submerge in cold stream), Compress with elastic bandage, and Elevate the limb. For suspected fractures, immobilize the limb using splints (made of sticks, sleeping pads, or trekking poles) in the position found. Do not try to realign bones."
+  }
+]

@@ -4,8 +4,9 @@ import requests
 import gradio as gr
 import pandas as pd
 import folium
-from src.gpx_parser import parse_gpx_file
+from src.gpx_parser import parse_gpx_file, haversine, save_enhanced_gpx
 import src.llm as llm
+import src.rag as rag
 
 # Initialize cache and temp folders
 os.makedirs("./temp", exist_ok=True)
@@ -13,21 +14,37 @@ os.makedirs("./temp", exist_ok=True)
 # Preloaded route path
 PRELOADED_ROUTE_PATH = r"C:\Users\skushwaha\Documents\hckthn\TrailHead\Routes\track_5-14724236830.gpx"
 
-def generate_folium_map(points, checkpoints):
+EMERGENCY_CARD = """
+## 🚨 IMMEDIATE BACKCOUNTRY EMERGENCY CARD (OFFLINE)
+If you encounter a medical crisis with no cellular signal, follow these basic steps:
+
+1. **Severe Bleeding:** Apply direct pressure with clean dressing. Elevate limb. Use tourniquet if blood is spurting.
+2. **Hypothermia:** Wrap in windproof shell/sleeping bag. Replace wet clothes. Provide warm sweet drinks.
+3. **Heat Stroke:** Move to shade. Actively cool by wetting skin and fanning. Sip cool water.
+4. **Altitude Illness (AMS/HAPE/HACE):** Descend immediately. Do not ascend. Administer oxygen if available.
+5. **Ankle Sprain (R.I.C.E):** Rest the joint. Ice or apply cold pack. Compress with elastic bandage. Elevate limb.
+
+*Disclaimer: This guide is for offline reference only. Always carry a PLB/satellite communicator on remote trails.*
+"""
+
+def generate_folium_map(points, checkpoints, pois, hiker_pos=None):
     """
-    Generate interactive folium map.
+    Generate interactive folium map rendering track, checkpoints, POIs, and current hiker pos.
     """
     if not points:
-        # Default centered map
         m = folium.Map(location=[46.0734974, 11.1717214], zoom_start=13)
         return m._repr_html_()
         
-    # Center map on the middle point of the track
-    mid_idx = len(points) // 2
-    start_lat = points[mid_idx]["lat"]
-    start_lon = points[mid_idx]["lon"]
-    
-    m = folium.Map(location=[start_lat, start_lon], zoom_start=14)
+    # Center map on current hiker position or middle of track
+    if hiker_pos:
+        center_lat, center_lon = hiker_pos["lat"], hiker_pos["lon"]
+        zoom_val = 15
+    else:
+        mid_idx = len(points) // 2
+        center_lat, center_lon = points[mid_idx]["lat"], points[mid_idx]["lon"]
+        zoom_val = 14
+        
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_val)
     
     # Draw track polyline
     locations = [(p["lat"], p["lon"]) for p in points]
@@ -41,7 +58,6 @@ def generate_folium_map(points, checkpoints):
         ele = cp["ele"]
         dist = cp["cum_dist"]
         
-        # Color code markers
         if name == "Start":
             color = "green"
             icon = "play"
@@ -59,12 +75,50 @@ def generate_folium_map(points, checkpoints):
             Elevation: {ele:.1f} m
         </div>
         """
-        
         folium.Marker(
             location=[lat, lon],
             popup=popup_text,
             tooltip=name,
             icon=folium.Icon(color=color, icon=icon)
+        ).add_to(m)
+        
+    # Draw POIs
+    for poi in pois:
+        poi_type = poi["type"]
+        icon_color = "purple"
+        icon_name = "info-sign"
+        
+        if "water" in poi_type or "spring" in poi_type:
+            icon_color = "blue"
+            icon_name = "tint"
+        elif "camp" in poi_type:
+            icon_color = "orange"
+            icon_name = "home"
+        elif "hut" in poi_type or "shelter" in poi_type:
+            icon_color = "green"
+            icon_name = "home"
+            
+        popup_text = f"""
+        <div style="font-family: 'Outfit', sans-serif; font-size: 11px;">
+            <b>{poi['name']}</b><br>
+            Type: {poi_type.replace('_', ' ').title()}<br>
+            Distance to Route: {poi['distance']:.1f} m
+        </div>
+        """
+        folium.Marker(
+            location=[poi["lat"], poi["lon"]],
+            popup=popup_text,
+            tooltip=poi['name'],
+            icon=folium.Icon(color=icon_color, icon=icon_name)
+        ).add_to(m)
+        
+    # Draw hiker's simulated position
+    if hiker_pos:
+        folium.Marker(
+            location=[hiker_pos["lat"], hiker_pos["lon"]],
+            popup=f"Current: {hiker_pos['cum_dist']/1000.0:.2f}km<br>Ele: {hiker_pos['ele']:.1f}m",
+            tooltip="Hiker Position",
+            icon=folium.Icon(color="red", icon="user")
         ).add_to(m)
         
     return m._repr_html_()
@@ -93,7 +147,6 @@ def fetch_ors_route(start_coords, end_coords, profile, api_key):
     file_path = os.path.join(temp_dir, "ors_fetched_route.gpx")
     
     if not api_key:
-        # Create a mock straight-line GPX (3 coordinates: start, mid, end) for demo purposes
         mid_lat = (start_lat + end_lat) / 2.0
         mid_lon = (start_lon + end_lon) / 2.0
         gpx_content = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -131,7 +184,6 @@ def fetch_ors_route(start_coords, end_coords, profile, api_key):
         else:
             raise ValueError(f"ORS returned status {response.status_code}")
     except Exception as e:
-        # Fallback straight-line
         mid_lat = (start_lat + end_lat) / 2.0
         mid_lon = (start_lon + end_lon) / 2.0
         gpx_content = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -149,30 +201,10 @@ def fetch_ors_route(start_coords, end_coords, profile, api_key):
         gr.Warning(f"ORS Fetch failed ({e}). Generated straight-line fallback route.")
         return file_path
 
-def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, profile, api_key, request: gr.Request = None):
-    # Determine which file to parse
-    file_path = PRELOADED_ROUTE_PATH
-    
-    # Check trigger source
-    # We can inspect input priority or simply prioritize upload -> fetch -> preloaded
-    if uploaded_file is not None:
-        file_path = uploaded_file.name
-    elif start_coords and end_coords:
-        # If coordinates are changed and user hits the trigger, we can fetch
-        # However, to avoid automatic fetching on load, we only fetch when this is called via button click.
-        # Since this function handles all triggers, we'll let app buttons set a temporary flag.
-        pass
-
-    try:
-        data = parse_gpx_file(file_path)
-    except Exception as e:
-        return (
-            f"<div style='color:#ef4444; padding:15px; border:1px solid #ef4444; border-radius:8px;'>Error loading GPX: {e}</div>",
-            f"<iframe srcdoc='<h3 style=\"color:red;\">Error rendering map: {e}</h3>' width='100%' height='520px'></iframe>",
-            []
-        )
-        
-    # Generate Stats HUD
+def format_route_view(data):
+    """
+    Format route data for presentation inside stats display and checkpoint lists.
+    """
     stats_html = f"""
     <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 15px; margin-bottom: 20px;'>
         <div class='hud-stat-box'>
@@ -198,11 +230,9 @@ def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, 
     </div>
     """
     
-    # Generate Folium Map
-    map_html = generate_folium_map(data["points"], data["checkpoints"])
+    map_html = generate_folium_map(data["points"], data["checkpoints"], data.get("pois", []))
     map_iframe = get_map_iframe(map_html)
     
-    # Format Checkpoint List for Dataframe
     checkpoint_table_data = []
     for cp in data["checkpoints"]:
         checkpoint_table_data.append([
@@ -214,33 +244,215 @@ def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, 
         
     return stats_html, map_iframe, checkpoint_table_data
 
+def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, profile, api_key):
+    file_path = PRELOADED_ROUTE_PATH
+    if uploaded_file is not None:
+        file_path = uploaded_file.name
+        
+    try:
+        data = parse_gpx_file(file_path)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return (
+            f"<div style='color:#ef4444;'>Error parsing GPX: {e}</div>",
+            "",
+            [],
+            {},
+            0,
+            gr.update(active=False),
+            "",
+            ""
+        )
+        
+    stats_html, map_iframe, checkpoint_table_data = format_route_view(data)
+    # Save a copy with POIs saved to disk
+    try:
+        enhanced_file = os.path.join("./temp", "trek_with_poi.gpx")
+        save_enhanced_gpx(file_path, enhanced_file, data.get("pois", []))
+    except Exception as ex:
+        print(f"[app] Error saving enhanced GPX: {ex}")
+        
+    return stats_html, map_iframe, checkpoint_table_data, data, 0, gr.update(active=False), "", ""
+
 def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
-    """Button click handler for fetching online routes."""
     try:
         route_file = fetch_ors_route(start_coords, end_coords, profile, api_key)
-        return handle_route_update(None, None, start_coords, end_coords, profile, api_key)
+        data = parse_gpx_file(route_file)
+        stats_html, map_iframe, checkpoint_table_data = format_route_view(data)
+        
+        try:
+            enhanced_file = os.path.join("./temp", "trek_with_poi.gpx")
+            save_enhanced_gpx(route_file, enhanced_file, data.get("pois", []))
+        except Exception as ex:
+            print(f"[app] Error saving enhanced GPX: {ex}")
+            
+        return stats_html, map_iframe, checkpoint_table_data, data, 0, gr.update(active=False), "", ""
     except Exception as e:
         return (
-            f"<div style='color:#ef4444; padding:15px; border:1px solid #ef4444; border-radius:8px;'>ORS Routing Error: {e}</div>",
-            gr.update(),
-            gr.update()
+            f"<div style='color:#ef4444;'>Error: {e}</div>",
+            "",
+            [],
+            {},
+            0,
+            gr.update(active=False),
+            "",
+            ""
         )
 
-# --- Gradio Chatbot Integration ---
-def respond(message, history):
-    # Enforce streaming for better UX
-    response_accumulator = ""
+# --- Playback Simulation Loop ---
+def step_simulation(current_idx, route_data, speed):
+    if not route_data or "points" not in route_data:
+        return current_idx, gr.update(), gr.update(), gr.update(), gr.update()
+        
+    points = route_data["points"]
+    checkpoints = route_data["checkpoints"]
+    pois = route_data.get("pois", [])
+    
+    if current_idx >= len(points):
+        return current_idx, gr.update(), gr.update(), gr.update(), gr.update()
+        
+    step_size = int(speed)
+    next_idx = current_idx + step_size
+    if next_idx >= len(points):
+        next_idx = len(points) - 1
+        
+    current_pt = points[next_idx]
+    
+    lat = current_pt["lat"]
+    lon = current_pt["lon"]
+    ele = current_pt["ele"]
+    cum_dist = current_pt["cum_dist"]
+    
+    total_dist = points[-1]["cum_dist"]
+    pct_complete = (cum_dist / total_dist) * 100.0 if total_dist > 0 else 0.0
+    
+    # Proximity alerts check
+    active_alerts = []
+    for poi in pois:
+        d = haversine(lat, lon, poi["lat"], poi["lon"])
+        if d <= 150.0:
+            icon_map = {
+                "drinking_water": "💧",
+                "spring": "💧",
+                "water_point": "💧",
+                "alpine_hut": "🏡",
+                "camp_site": "⛺",
+                "shelter": "🛡️"
+            }
+            icon = icon_map.get(poi["type"], "📍")
+            active_alerts.append(f"<div style='background:rgba(245,158,11,0.15); border:1px solid #f59e0b; padding:10px; border-radius:8px; margin-bottom:5px; color:#f59e0b;'>{icon} <b>PROXIMITY:</b> {poi['name']} is {d:.0f}m away! ({poi['type'].replace('_', ' ').title()})</div>")
+            
+    # Checkpoint ETA progress
+    next_cp = None
+    for cp in checkpoints:
+        if cp["cum_dist"] * 1000.0 > cum_dist:
+            next_cp = cp
+            break
+            
+    eta_text = "N/A"
+    if next_cp:
+        dist_to_cp = (next_cp["cum_dist"] * 1000.0) - cum_dist
+        eta_sec = dist_to_cp / 1.38
+        eta_text = f"{int(eta_sec // 60)}m {int(eta_sec % 60)}s"
+        
+    alerts_html = "".join(active_alerts) if active_alerts else "<div style='color:var(--text-muted);'>No active proximity alerts.</div>"
+    
+    # Render updated folium map
+    map_html = generate_folium_map(points, checkpoints, pois, hiker_pos=current_pt)
+    map_iframe = get_map_iframe(map_html)
+    
+    # Live HUD Panel
+    hud_html = f"""
+    <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 15px; margin-bottom: 20px;'>
+        <div class='hud-stat-box'>
+            <div class='hud-stat-val mono-display'>{pct_complete:.1f}%</div>
+            <div class='hud-stat-lbl'>Route Progress</div>
+        </div>
+        <div class='hud-stat-box'>
+            <div class='hud-stat-val mono-display'>{cum_dist/1000.0:.2f} km</div>
+            <div class='hud-stat-lbl'>Distance Hiked</div>
+        </div>
+        <div class='hud-stat-box'>
+            <div class='hud-stat-val mono-display'>{ele:.1f} m</div>
+            <div class='hud-stat-lbl'>Current Altitude</div>
+        </div>
+        <div class='hud-stat-box'>
+            <div class='hud-stat-val mono-display'>{eta_text}</div>
+            <div class='hud-stat-lbl'>ETA to Next Point</div>
+        </div>
+    </div>
+    """
+    
+    # Proximity narration brief
+    narration_html = ""
+    for cp in checkpoints:
+        cp_dist_m = cp["cum_dist"] * 1000.0
+        if abs(cum_dist - cp_dist_m) <= 150.0:
+            cautions = ""
+            if ele > 2400:
+                cautions = " WARNING: Altitude is above 2400m. Watch for AMS symptoms (headache, dizziness)."
+            narration_html = f"""
+            <div style='border-left: 4px solid var(--accent-primary); background: rgba(245,158,11,0.05); padding: 15px; border-radius: 0 8px 8px 0;'>
+                <b style='color:var(--accent-primary);'>📻 RADIO BRIEFING FOR {cp['name'].upper()}:</b>
+                <p style='margin-top: 5px; font-style: italic;'>
+                    "Hiker, you have arrived at {cp['name']}. Current altitude is {ele:.1f}m.{cautions}"
+                </p>
+            </div>
+            """
+            break
+            
+    return next_idx, hud_html, map_iframe, alerts_html, narration_html
+
+# --- First-Aid Manual Search ---
+def handle_first_aid_search(query):
+    if not query.strip():
+        return "Please enter symptoms or injury to search the manual."
+        
+    grounding_text, sources = rag.retrieve_first_aid(query)
+    if not grounding_text:
+        return "No matching first-aid sections found in the manual. (Please carry a PLB/satellite communicator on remote trails)."
+        
     system_prompt = (
-        "You are Trailhead Guide, a helpful and knowledgeable wilderness trekking expert.\n"
-        "You help hikers prepare for routes, review gear checklists, and learn wilderness first-aid.\n"
-        "Be professional, concise, and safety-oriented. Emphasize offline preparedness."
+        "You are Trailhead Guide, an expert wilderness medicine counselor.\n"
+        "Provide a concise, direct, and actionable step-by-step first-aid protocol based on the provided guide context.\n"
+        "Cite the section at the end."
     )
+    prompt = f"Context:\n{grounding_text}\n\nQuestion: {query}\n\nAnswer:"
+    response = llm.generate(prompt, system=system_prompt, stream=False)
+    
+    return f"### Retrieval Results ({', '.join(sources)})\n\n{response}"
+
+# --- Chatbot Integration ---
+def respond(message, history):
+    response_accumulator = ""
+    grounding_text, sources = rag.retrieve_first_aid(message)
+    
+    if grounding_text:
+        source_cite = "Sources: " + ", ".join(sources)
+        system_prompt = (
+            "You are Trailhead Guide, a wilderness first-aid advisor.\n"
+            "Answer the query using ONLY the provided guide context.\n"
+            f"Context:\n{grounding_text}\n"
+            "Keep the instructions clear, numbered, and precise.\n"
+            f"Cite: '{source_cite}'."
+        )
+    else:
+        system_prompt = (
+            "You are Trailhead Guide, an expert hiking guide.\n"
+            "Provide helpful, concise trekking advice."
+        )
+        
     for token in llm.generate(message, system=system_prompt, history=history, stream=True):
         response_accumulator += token
         yield response_accumulator
 
 # --- Gradio Blocks UI ---
 with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Computer") as demo:
+    # State management
+    route_state = gr.State({})
+    current_point_idx = gr.State(0)
+    
     gr.HTML("""
     <div style='text-align: center; padding: 10px 0;'>
         <h1>🌲 Trailhead 🌲</h1>
@@ -249,6 +461,9 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
         </p>
     </div>
     """)
+    
+    # Timer loop for simulation
+    timer = gr.Timer(value=0.2, active=False)
     
     with gr.Tabs():
         with gr.TabItem("🧭 Trek Planner & HUD"):
@@ -259,7 +474,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                     preloaded_route = gr.Dropdown(
                         choices=["Preloaded Route: Trento Track"],
                         value="Preloaded Route: Trento Track",
-                        label="Preloaded Routes (Trento, Italy)"
+                        label="Preloaded Routes"
                     )
                     
                     upload_file = gr.File(
@@ -268,7 +483,6 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                     )
                     
                     with gr.Accordion("🔌 Fetch Online Route (Basecamp Mode)", open=False):
-                        gr.Markdown("Generate route paths between waypoints using OpenRouteService.")
                         start_pt = gr.Textbox(
                             value="46.0734974, 11.1717214",
                             label="Start Coordinates (Lat, Lon)"
@@ -278,23 +492,35 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                             label="End Coordinates (Lat, Lon)"
                         )
                         ors_profile = gr.Dropdown(
-                            choices=["foot-hiking", "foot-walking", "cycling-mountain"],
+                            choices=["foot-hiking", "foot-walking"],
                             value="foot-hiking",
                             label="Profile"
                         )
                         ors_api_key = gr.Textbox(
                             type="password",
-                            label="OpenRouteService API Key (Optional)",
-                            placeholder="Paste your API key here..."
+                            label="OpenRouteService API Key (Optional)"
                         )
                         fetch_route_btn = gr.Button("Fetch & Load Route", variant="secondary")
                         
+                    gr.Markdown("### 🎮 Trek Simulation Controls")
+                    with gr.Row():
+                        play_btn = gr.Button("▶ PLAY", variant="primary")
+                        pause_btn = gr.Button("⏸ PAUSE", variant="secondary")
+                        reset_btn = gr.Button("🔄 RESET", variant="secondary")
+                    speed_slider = gr.Slider(minimum=1, maximum=20, step=1, value=1, label="Simulation Speed (Points per tick)")
+                    
+                    gr.Markdown("### ⚠️ Active Proximity Alerts")
+                    alerts_output = gr.HTML(value="<div style='color:var(--text-muted);'>No active proximity alerts.</div>")
+                    
                 with gr.Column(scale=2):
                     # Stats display
                     stats_display = gr.HTML()
                     
                     # Interactive Map display
                     map_display = gr.HTML()
+                    
+                    # Narration briefing output
+                    narration_output = gr.HTML(value="")
                     
             with gr.Accordion("📋 Route Checkpoint Briefing", open=True):
                 checkpoint_table = gr.DataFrame(
@@ -303,6 +529,16 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                     column_count=(4, "fixed")
                 )
                 
+        with gr.TabItem("🩺 Wilderness First-Aid"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.HTML(EMERGENCY_CARD)
+                with gr.Column(scale=1):
+                    gr.Markdown("## 🔍 Wilderness First-Aid manual RAG Search")
+                    rag_query = gr.Textbox(placeholder="What symptoms or injury do you want to query?", label="Query Symptoms")
+                    rag_search_btn = gr.Button("Search manual", variant="primary")
+                    rag_output = gr.Markdown(value="*Manual results will be displayed here.*")
+                    
         with gr.TabItem("💬 Wilderness Guide AI"):
             gr.ChatInterface(
                 respond,
@@ -313,33 +549,73 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 ]
             )
 
-    # --- Triggers ---
+    # --- Simulation player bindings ---
+    timer.tick(
+        fn=step_simulation,
+        inputs=[current_point_idx, route_state, speed_slider],
+        outputs=[current_point_idx, stats_display, map_display, alerts_output, narration_output]
+    )
+    
+    play_btn.click(
+        fn=lambda: gr.update(active=True),
+        inputs=[],
+        outputs=[timer]
+    )
+    
+    pause_btn.click(
+        fn=lambda: gr.update(active=False),
+        inputs=[],
+        outputs=[timer]
+    )
+    
+    def handle_reset(route):
+        pts = route.get("points", [])
+        if pts:
+            # Reformat map to reset pose
+            stats_html, map_iframe, checkpoint_table_data = format_route_view(route)
+            return 0, gr.update(active=False), map_iframe, stats_html, "", ""
+        return 0, gr.update(active=False), gr.update(), gr.update(), "", ""
+        
+    reset_btn.click(
+        fn=handle_reset,
+        inputs=[route_state],
+        outputs=[current_point_idx, timer, map_display, stats_display, alerts_output, narration_output]
+    )
+
+    # --- Route Ingestion Triggers ---
     # Load default route on startup
     demo.load(
         fn=handle_route_update,
         inputs=[preloaded_route, upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table]
+        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output]
     )
     
     # Preloaded selection change
     preloaded_route.change(
         fn=handle_route_update,
         inputs=[preloaded_route, gr.State(None), gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table]
+        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output]
     )
     
     # Uploaded file change
     upload_file.change(
         fn=handle_route_update,
         inputs=[gr.State(None), upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table]
+        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output]
     )
     
     # Fetch route button click
     fetch_route_btn.click(
         fn=handle_ors_fetch_click,
         inputs=[start_pt, end_pt, ors_profile, ors_api_key],
-        outputs=[stats_display, map_display, checkpoint_table]
+        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output]
+    )
+    
+    # --- RAG Trigger ---
+    rag_search_btn.click(
+        fn=handle_first_aid_search,
+        inputs=[rag_query],
+        outputs=[rag_output]
     )
 
 if __name__ == "__main__":
