@@ -7,9 +7,11 @@ import folium
 from src.gpx_parser import parse_gpx_file, haversine, save_enhanced_gpx
 import src.llm as llm
 import src.rag as rag
+import src.database as db
 
-# Initialize cache and temp folders
+# Initialize cache and temp folders and SQLite database
 os.makedirs("./temp", exist_ok=True)
+db.init_db()
 
 # Preloaded route path
 PRELOADED_ROUTE_PATH = r"C:\Users\skushwaha\Documents\hckthn\TrailHead\Routes\track_5-14724236830.gpx"
@@ -49,7 +51,22 @@ MAP_INIT_JS = r"""
             var map = L.map("trailhead-leaflet-map").setView([46.0734974, 11.1717214], 13);
             window.myLeafletMap = map;
             
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            if (typeof L.TileLayer.OfflineFirst === 'undefined') {
+                L.TileLayer.OfflineFirst = L.TileLayer.extend({
+                    createTile: function(coords, done) {
+                        var tile = L.TileLayer.prototype.createTile.call(this, coords, done);
+                        L.DomEvent.on(tile, 'error', function() {
+                            var osmUrl = 'https://tile.openstreetmap.org/' + coords.z + '/' + coords.x + '/' + coords.y + '.png';
+                            if (tile.src !== osmUrl) {
+                                tile.src = osmUrl;
+                            }
+                        });
+                        return tile;
+                    }
+                });
+            }
+            
+            window.activeTileLayer = new L.TileLayer.OfflineFirst('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19,
                 attribution: '&copy; OpenStreetMap'
             }).addTo(map);
@@ -64,6 +81,17 @@ MAP_INIT_JS = r"""
                     var data = JSON.parse(routeJson);
                     var map = window.myLeafletMap;
                     if (!map) return;
+                    
+                    var tilesDir = data.tiles_dir || '';
+                    if (tilesDir && window.activeTileLayer) {
+                        map.removeLayer(window.activeTileLayer);
+                        var localUrl = '/file=' + tilesDir + '/{z}/{x}/{y}.png';
+                        window.activeTileLayer = new L.TileLayer.OfflineFirst(localUrl, {
+                            maxZoom: 16,
+                            minZoom: 13,
+                            attribution: '&copy; OpenStreetMap'
+                        }).addTo(map);
+                    }
                     
                     if (window.mapLayers) {
                         window.mapLayers.clearLayers();
@@ -202,6 +230,71 @@ MAP_INIT_JS = r"""
 }
 """
 
+
+def generate_elevation_plot(points, current_idx=None):
+    """
+    Generate an offline-ready Plotly elevation profile chart.
+    If current_idx is provided, displays a vertical line or marker for the hiker's current position.
+    """
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return None
+        
+    if not points:
+        return None
+        
+    x = [p["cum_dist"] / 1000.0 for p in points]
+    y = [p["ele"] for p in points]
+    
+    fig = go.Figure()
+    
+    # Area chart for elevation
+    fig.add_trace(go.Scatter(
+        x=x, 
+        y=y, 
+        mode='lines', 
+        fill='tozeroy', 
+        line=dict(color='#f59e0b', width=2.5),
+        fillcolor='rgba(245,158,11,0.15)',
+        name='Elevation'
+    ))
+    
+    # Hiker's current position dot
+    if current_idx is not None and 0 <= current_idx < len(points):
+        hiker_pt = points[current_idx]
+        h_x = hiker_pt["cum_dist"] / 1000.0
+        h_y = hiker_pt["ele"]
+        
+        # Add hiker position dot
+        fig.add_trace(go.Scatter(
+            x=[h_x],
+            y=[h_y],
+            mode='markers',
+            marker=dict(color='#ef4444', size=12, symbol='circle', line=dict(color='#ffffff', width=2)),
+            name='You'
+        ))
+        
+        # Add vertical line
+        fig.add_vline(x=h_x, line_width=1, line_dash="dash", line_color="#ef4444")
+        
+    fig.update_layout(
+        title="🏔️ ELEVATION PROFILE",
+        xaxis_title="Distance (km)",
+        yaxis_title="Elevation (m)",
+        plot_bgcolor='#0c1014',
+        paper_bgcolor='#0c1014',
+        font=dict(color='#f59e0b', family='Share Tech Mono, monospace'),
+        margin=dict(l=50, r=20, t=50, b=50),
+        hovermode="x unified",
+        showlegend=False,
+        height=280
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(245,158,11,0.1)')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(245,158,11,0.1)')
+    
+    return fig
 
 EMERGENCY_CARD = """
 ## 🚨 IMMEDIATE BACKCOUNTRY EMERGENCY CARD (OFFLINE)
@@ -530,9 +623,34 @@ def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, 
             gr.update(active=False),
             "",
             "",
-            ""
+            "",
+            None
         )
         
+    # Load custom waypoints from DB and merge them into POIs
+    try:
+        custom_wps = db.get_custom_waypoints()
+        for wp in custom_wps:
+            min_d = float('inf')
+            closest_idx = -1
+            for idx, pt in enumerate(data["points"]):
+                d = haversine(wp["lat"], wp["lon"], pt["lat"], pt["lon"])
+                if d < min_d:
+                    min_d = d
+                    closest_idx = idx
+            
+            data["pois"].append({
+                "id": f"custom_{wp['id']}",
+                "lat": wp["lat"],
+                "lon": wp["lon"],
+                "type": wp["type"],
+                "name": f"📍 {wp['name']} (Custom)",
+                "distance": round(min_d, 1) if closest_idx != -1 else 0.0,
+                "track_index": closest_idx
+            })
+    except Exception as ex:
+        print(f"[app] Error loading custom waypoints: {ex}")
+
     stats_html, map_iframe, checkpoint_table_data = format_route_view(data)
     # Save a copy with POIs saved to disk
     try:
@@ -550,18 +668,49 @@ def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, 
         "cum_dist": start_pt["cum_dist"] / 1000.0
     })
     
+    # Get absolute path of tiles directory to pass to Leaflet
+    tiles_dir_abs = os.path.abspath("./assets/tiles").replace("\\", "/")
+    
     route_json = json.dumps({
         "points": data["points"],
         "checkpoints": data["checkpoints"],
-        "pois": data.get("pois", [])
+        "pois": data.get("pois", []),
+        "tiles_dir": tiles_dir_abs
     })
+    
+    ele_plot = generate_elevation_plot(data["points"], 0)
         
-    return stats_html, route_json, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json
+    return stats_html, route_json, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json, ele_plot
 
 def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
     try:
         route_file = fetch_ors_route(start_coords, end_coords, profile, api_key)
         data = parse_gpx_file(route_file)
+        
+        # Load custom waypoints from DB and merge them into POIs
+        try:
+            custom_wps = db.get_custom_waypoints()
+            for wp in custom_wps:
+                min_d = float('inf')
+                closest_idx = -1
+                for idx, pt in enumerate(data["points"]):
+                    d = haversine(wp["lat"], wp["lon"], pt["lat"], pt["lon"])
+                    if d < min_d:
+                        min_d = d
+                        closest_idx = idx
+                
+                data["pois"].append({
+                    "id": f"custom_{wp['id']}",
+                    "lat": wp["lat"],
+                    "lon": wp["lon"],
+                    "type": wp["type"],
+                    "name": f"📍 {wp['name']} (Custom)",
+                    "distance": round(min_d, 1) if closest_idx != -1 else 0.0,
+                    "track_index": closest_idx
+                })
+        except Exception as ex:
+            print(f"[app] Error loading custom waypoints: {ex}")
+
         stats_html, map_iframe, checkpoint_table_data = format_route_view(data)
         
         try:
@@ -579,12 +728,17 @@ def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
             "cum_dist": start_pt["cum_dist"] / 1000.0
         })
         
+        tiles_dir_abs = os.path.abspath("./assets/tiles").replace("\\", "/")
+        
         route_json = json.dumps({
             "points": data["points"],
             "checkpoints": data["checkpoints"],
-            "pois": data.get("pois", [])
+            "pois": data.get("pois", []),
+            "tiles_dir": tiles_dir_abs
         })
-        return stats_html, route_json, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json
+        
+        ele_plot = generate_elevation_plot(data["points"], 0)
+        return stats_html, route_json, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json, ele_plot
     except Exception as e:
         return (
             f"<div style='color:#ef4444;'>Error: {e}</div>",
@@ -595,25 +749,21 @@ def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
             gr.update(active=False),
             "",
             "",
-            ""
+            "",
+            None
         )
-
-
-
-
-
 
 # --- Playback Simulation Loop ---
 def step_simulation(current_idx, route_data, speed):
     if not route_data or "points" not in route_data:
-        return current_idx, gr.update(), gr.update(), gr.update(), ""
+        return current_idx, gr.update(), gr.update(), gr.update(), "", gr.update()
         
     points = route_data["points"]
     checkpoints = route_data["checkpoints"]
     pois = route_data.get("pois", [])
     
     if current_idx >= len(points):
-        return current_idx, gr.update(), gr.update(), gr.update(), ""
+        return current_idx, gr.update(), gr.update(), gr.update(), "", gr.update()
         
     step_size = int(speed)
     next_idx = current_idx + step_size
@@ -713,7 +863,15 @@ def step_simulation(current_idx, route_data, speed):
         "ele": ele,
         "cum_dist": cum_dist / 1000.0
     })
-    return next_idx, hud_html, alerts_html, narration_html, hiker_coords_json
+    
+    # Throttled Plotly update (every 10 simulation steps)
+    plot_update = gr.update()
+    if next_idx == 0 or next_idx == len(points) - 1 or next_idx % 10 == 0:
+        fig = generate_elevation_plot(points, next_idx)
+        if fig:
+            plot_update = fig
+            
+    return next_idx, hud_html, alerts_html, narration_html, hiker_coords_json, plot_update
 
 
 
@@ -759,6 +917,166 @@ def respond(message, history):
     for token in llm.generate(message, system=system_prompt, history=history, stream=True):
         response_accumulator += token
         yield response_accumulator
+
+# --- Phase 3 Callbacks (Waypoint Tagging, Voice Logs, AI Storytelling) ---
+def handle_tag_waypoint(wp_type, wp_name, hiker_pos_coords_str, route_state_val):
+    if not hiker_pos_coords_str:
+        return gr.update(), route_state_val, "<span style='color:#ef4444;'>Error: No active simulated hiker position to tag!</span>", []
+    if not wp_name.strip():
+        return gr.update(), route_state_val, "<span style='color:#ef4444;'>Error: Waypoint name cannot be empty!</span>", []
+        
+    import json
+    try:
+        h_coords = json.loads(hiker_pos_coords_str)
+        lat = h_coords["lat"]
+        lon = h_coords["lon"]
+        ele = h_coords["ele"]
+    except Exception as e:
+        return gr.update(), route_state_val, f"<span style='color:#ef4444;'>Error parsing coordinates: {e}</span>", []
+        
+    # Save to DB
+    db.add_custom_waypoint(lat, lon, ele, wp_type, wp_name)
+    
+    # Load updated waypoints
+    custom_wps = db.get_custom_waypoints()
+    wp_list = [[wp["timestamp"], wp["type"].upper(), wp["name"], f"{wp['lat']:.5f}, {wp['lon']:.5f}", f"{wp['ele']:.1f} m"] for wp in custom_wps]
+    
+    # Merge into map POIs
+    route_json_str = gr.update()
+    if route_state_val and "points" in route_state_val:
+        min_d = float('inf')
+        closest_idx = -1
+        for idx, pt in enumerate(route_state_val["points"]):
+            d = haversine(lat, lon, pt["lat"], pt["lon"])
+            if d < min_d:
+                min_d = d
+                closest_idx = idx
+        
+        if "pois" not in route_state_val:
+            route_state_val["pois"] = []
+            
+        route_state_val["pois"].append({
+            "id": f"custom_{len(custom_wps)}",
+            "lat": lat,
+            "lon": lon,
+            "type": wp_type,
+            "name": f"📍 {wp_name} (Custom)",
+            "distance": round(min_d, 1) if closest_idx != -1 else 0.0,
+            "track_index": closest_idx
+        })
+        
+        tiles_dir_abs = os.path.abspath("./assets/tiles").replace("\\", "/")
+        
+        route_json_str = json.dumps({
+            "points": route_state_val["points"],
+            "checkpoints": route_state_val["checkpoints"],
+            "pois": route_state_val["pois"],
+            "tiles_dir": tiles_dir_abs
+        })
+        
+    msg = f"<span style='color:#10b981;'>Successfully tagged '{wp_name}' ({wp_type.replace('_', ' ').title()}) at your position!</span>"
+    return route_json_str, route_state_val, msg, wp_list
+
+def handle_clear_waypoints(route_state_val):
+    db.clear_custom_waypoints()
+    
+    route_json_str = gr.update()
+    if route_state_val and "pois" in route_state_val:
+        # Remove POIs that were added custom
+        route_state_val["pois"] = [p for p in route_state_val["pois"] if not str(p.get("id", "")).startswith("custom_")]
+        
+        tiles_dir_abs = os.path.abspath("./assets/tiles").replace("\\", "/")
+        route_json_str = json.dumps({
+            "points": route_state_val["points"],
+            "checkpoints": route_state_val["checkpoints"],
+            "pois": route_state_val["pois"],
+            "tiles_dir": tiles_dir_abs
+        })
+        
+    return route_json_str, route_state_val, "<span style='color:#ef4444;'>Cleared all custom waypoints.</span>", []
+
+def handle_save_journal(audio_path, hiker_pos_coords_str):
+    if not audio_path:
+        return "", [], "<span style='color:#ef4444;'>Error: No recorded voice audio found!</span>", gr.update()
+        
+    lat, lon, ele, cum_dist = 0.0, 0.0, 0.0, 0.0
+    if hiker_pos_coords_str:
+        try:
+            import json
+            h_coords = json.loads(hiker_pos_coords_str)
+            lat = h_coords["lat"]
+            lon = h_coords["lon"]
+            ele = h_coords["ele"]
+            cum_dist = h_coords["cum_dist"]
+        except Exception as e:
+            print(f"[app] Error parsing simulation coordinates for journal: {e}")
+            
+    print(f"[app] Transcribing journal audio file from {audio_path}...")
+    transcript = llm.transcribe_audio(audio_path, prompt="Wilderness trek journal log")
+    
+    if not transcript or not transcript.strip():
+        return "", [], "<span style='color:#ef4444;'>Error: ASR transcription returned empty text!</span>", gr.update()
+        
+    # Save to SQLite
+    db.add_journal_entry(lat, lon, ele, cum_dist, transcript)
+    
+    # Fetch updated logs
+    logs = db.get_journal_entries()
+    logs_table = [[l["timestamp"], f"{l['lat']:.5f}, {l['lon']:.5f}", f"{l['cum_dist']:.2f} km", l["transcript"]] for l in logs]
+    
+    msg = f"<span style='color:#10b981;'>Saved journal entry at Km {cum_dist:.2f} successfully!</span>"
+    return transcript, logs_table, msg, None
+
+def handle_clear_journal():
+    db.clear_journal_logs()
+    return "", [], "<span style='color:#ef4444;'>Cleared all voice journal logs.</span>"
+
+def handle_generate_story(route_state_val):
+    logs = db.get_journal_entries()
+    if not logs:
+        return "### 📖 No Voice Logs Found\n\nPlease record and save some voice journal entries during your simulated trek before generating your AI story!", None
+        
+    # Compile journal logs chronologically (oldest first)
+    logs_chron = list(reversed(logs))
+    journal_text = ""
+    for idx, l in enumerate(logs_chron):
+        journal_text += f"\n- Log #{idx+1} ({l['timestamp']}) at Km {l['cum_dist']:.2f} (Alt: {l['ele']:.1f}m):\n  \"{l['transcript']}\"\n"
+        
+    # Compile route stats
+    stats_text = "Trek stats:\n"
+    if route_state_val and "total_distance_km" in route_state_val:
+        stats_text += f"- Total Distance: {route_state_val['total_distance_km']:.2f} km\n"
+        stats_text += f"- Elevation Gain: {route_state_val['elevation_gain_m']:.1f} m\n"
+        stats_text += f"- Altitude Range: {route_state_val['min_elevation_m']:.1f}m - {route_state_val['max_elevation_m']:.1f}m\n"
+    else:
+        stats_text += "- Trento Route Simulation\n"
+        
+    system_prompt = (
+        "You are a classic wilderness novelist and explorer. Write a compelling, first-person "
+        "adventure story summarizing the trek based ONLY on the provided route statistics and the hiker's voice journal entries. "
+        "Do not invent new landmarks, water sources, or hazards that are not mentioned in the voice logs. "
+        "Keep the tone rugged, epic, and highly tactical. Organise the story with headings corresponding to distance milestones. "
+        "At the end, sign off as 'Trailhead AI Storyteller'."
+    )
+    
+    prompt = f"""Here are the details of my wilderness journey:
+
+{stats_text}
+
+Here are my recorded voice logs during the trek:
+{journal_text}
+
+Please write a cohesive first-person adventure story of my trek."""
+
+    story = llm.generate(prompt, system=system_prompt, stream=False)
+    
+    # Save to a file in temp
+    os.makedirs("./temp", exist_ok=True)
+    story_file = os.path.abspath("./temp/post_trek_story.md")
+    with open(story_file, "w", encoding="utf-8") as f:
+        f.write(story)
+        
+    return story, story_file
 
 # --- Gradio Blocks UI ---
 with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Computer") as demo:
@@ -856,12 +1174,33 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                     gr.Markdown("### ⚠️ Active Proximity Alerts")
                     alerts_output = gr.HTML(value="<div style='color:var(--text-muted);'>No active proximity alerts.</div>")
                     
+                    with gr.Accordion("📍 Tag Custom Waypoint (Offline)", open=False):
+                        wp_type = gr.Dropdown(
+                            choices=["drinking_water", "shelter", "camp_site", "viewpoint", "hazard"],
+                            value="drinking_water",
+                            label="Waypoint Type"
+                        )
+                        wp_name = gr.Textbox(placeholder="Name (e.g. Fresh Stream)", label="Waypoint Name")
+                        tag_wp_btn = gr.Button("Tag Current Location", variant="primary")
+                        clear_wps_btn = gr.Button("Clear Tagged Waypoints", variant="stop")
+                        tag_status = gr.HTML(value="")
+                        
+                        tagged_wps_table = gr.DataFrame(
+                            headers=["Timestamp", "Type", "Name", "Coordinates", "Altitude"],
+                            datatype=["str", "str", "str", "str", "str"],
+                            value=[]
+                        )
+                    
                 with gr.Column(scale=2):
                     # Stats display
                     stats_display = gr.HTML()
                     
                     # Interactive Map display
                     map_display = gr.HTML(value=MAP_HTML_INITIALIZER)
+                    
+                    # Elevation Profile display
+                    elevation_profile_plot = gr.Plot(label="Elevation Profile", elem_id="elevation-plot")
+                    
                     # Narration briefing output
                     narration_output = gr.HTML(value="")
                     
@@ -892,6 +1231,38 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 ]
             )
 
+        with gr.TabItem("🎙️ Voice Journal & Reports"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("## 🎙️ Hands-Free Voice Trek Journal")
+                    gr.Markdown("Record audio logs during your journey. They will be automatically transcribed and geotagged with your current coordinates and altitude.")
+                    
+                    journal_audio = gr.Audio(sources=["microphone"], type="filepath", label="Record Voice Log")
+                    save_journal_btn = gr.Button("💾 Save Voice Log", variant="primary")
+                    clear_journal_btn = gr.Button("🗑️ Clear Logs", variant="stop")
+                    
+                    journal_status = gr.HTML(value="")
+                    last_transcription = gr.Textbox(label="Last Transcription (ASR)", interactive=False)
+                    
+                with gr.Column(scale=1):
+                    gr.Markdown("## 📓 Saved Journal Logs")
+                    journal_logs_table = gr.DataFrame(
+                        headers=["Timestamp", "Coordinates", "Distance Hiked", "Transcript"],
+                        datatype=["str", "str", "str", "str"],
+                        value=[]
+                    )
+                    
+            gr.Markdown("---")
+            with gr.Row():
+                with gr.Column(scale=2):
+                    gr.Markdown("## 📖 Post-Trek AI Storyteller")
+                    gr.Markdown("Click below to compile all your saved voice journal logs and route statistics into an AI-narrated story of your adventure!")
+                    generate_story_btn = gr.Button("🎬 Generate AI Trek Story", variant="primary")
+                    story_output = gr.Markdown(value="*Your adventure narrative will be generated here.*")
+                with gr.Column(scale=1):
+                    gr.Markdown("### 📥 Download Story")
+                    story_download = gr.File(label="Download Story (Markdown)", interactive=False)
+
 
     
 
@@ -900,7 +1271,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     timer.tick(
         fn=step_simulation,
         inputs=[current_point_idx, route_state, speed_slider],
-        outputs=[current_point_idx, stats_display, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[current_point_idx, stats_display, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
     
     play_btn.click(
@@ -929,13 +1300,14 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 "ele": start_pt["ele"],
                 "cum_dist": start_pt["cum_dist"] / 1000.0
             })
-            return 0, gr.update(active=False), stats_html, "", "", hiker_coords_json
-        return 0, gr.update(active=False), gr.update(), "", "", ""
+            ele_plot = generate_elevation_plot(pts, 0)
+            return 0, gr.update(active=False), stats_html, "", "", hiker_coords_json, ele_plot
+        return 0, gr.update(active=False), gr.update(), "", "", "", None
         
     reset_btn.click(
         fn=handle_reset,
         inputs=[route_state],
-        outputs=[current_point_idx, timer, stats_display, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[current_point_idx, timer, stats_display, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
 
 
@@ -946,7 +1318,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     demo.load(
         fn=handle_route_update,
         inputs=[preloaded_route, upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords],
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot],
         js=MAP_INIT_JS
     )
     
@@ -954,23 +1326,54 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     preloaded_route.change(
         fn=handle_route_update,
         inputs=[preloaded_route, gr.State(None), gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
     
     # Uploaded file change
     upload_file.change(
         fn=handle_route_update,
         inputs=[gr.State(None), upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
     
     # Fetch route button click
     fetch_route_btn.click(
         fn=handle_ors_fetch_click,
         inputs=[start_pt, end_pt, ors_profile, ors_api_key],
-        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
 
+    # --- Custom Waypoint Tagging Triggers ---
+    tag_wp_btn.click(
+        fn=handle_tag_waypoint,
+        inputs=[wp_type, wp_name, hiker_pos_coords, route_state],
+        outputs=[route_data_json, route_state, tag_status, tagged_wps_table]
+    )
+    
+    clear_wps_btn.click(
+        fn=handle_clear_waypoints,
+        inputs=[route_state],
+        outputs=[route_data_json, route_state, tag_status, tagged_wps_table]
+    )
+
+    # --- Voice Journal & Reports Triggers ---
+    save_journal_btn.click(
+        fn=handle_save_journal,
+        inputs=[journal_audio, hiker_pos_coords],
+        outputs=[last_transcription, journal_logs_table, journal_status, journal_audio]
+    )
+    
+    clear_journal_btn.click(
+        fn=handle_clear_journal,
+        inputs=[],
+        outputs=[last_transcription, journal_logs_table, journal_status]
+    )
+    
+    generate_story_btn.click(
+        fn=handle_generate_story,
+        inputs=[route_state],
+        outputs=[story_output, story_download]
+    )
     
     # --- RAG Trigger ---
     rag_search_btn.click(
