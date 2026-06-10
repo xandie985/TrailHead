@@ -5,3 +5,6 @@ requests
 huggingface_hub
 gpxpy
 folium
+plotly
+pywhispercpp
+miniaudio
