@@ -14,6 +14,173 @@ os.makedirs("./temp", exist_ok=True)
 # Preloaded route path
 PRELOADED_ROUTE_PATH = r"C:\Users\skushwaha\Documents\hckthn\TrailHead\Routes\track_5-14724236830.gpx"
 
+MAP_HTML_INITIALIZER = """
+<div id="trailhead-leaflet-map" style="height: 520px; width: 100%; border:1px solid rgba(245,158,11,0.2); border-radius: 12px; background: #0c1014; z-index: 1;"></div>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function() {
+    var checkExist = setInterval(function() {
+        if (typeof L !== 'undefined' && L.map) {
+            clearInterval(checkExist);
+            var mapContainer = document.getElementById("trailhead-leaflet-map");
+            if (!mapContainer || window.myLeafletMap) return;
+            
+            var map = L.map("trailhead-leaflet-map").setView([46.0734974, 11.1717214], 13);
+            window.myLeafletMap = map;
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(map);
+            
+            window.mapLayers = L.layerGroup().addTo(map);
+            window.hikerMarker = null;
+        }
+    }, 100);
+
+    // Handler for new route data JSON
+    window.routeDataChangeHandler = function(routeJson) {
+        if (!routeJson) return;
+        try {
+            var data = JSON.parse(routeJson);
+            var map = window.myLeafletMap;
+            if (!map) {
+                setTimeout(() => window.routeDataChangeHandler(routeJson), 100);
+                return;
+            }
+            
+            if (window.mapLayers) {
+                window.mapLayers.clearLayers();
+            }
+            if (window.hikerMarker) {
+                window.hikerMarker.remove();
+                window.hikerMarker = null;
+            }
+            
+            var points = data.points || [];
+            var checkpoints = data.checkpoints || [];
+            var pois = data.pois || [];
+            
+            if (points.length === 0) return;
+            
+            // Draw track line
+            var latlngs = points.map(p => [p.lat, p.lon]);
+            var polyline = L.polyline(latlngs, {
+                color: "#f59e0b",
+                weight: 5,
+                opacity: 0.85
+            }).addTo(window.mapLayers);
+            
+            map.fitBounds(polyline.getBounds());
+            
+            // Draw checkpoints
+            checkpoints.forEach(cp => {
+                var color = "cadetblue";
+                if (cp.name === "Start") color = "green";
+                else if (cp.name === "End") color = "red";
+                
+                var popupText = `
+                <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
+                    <b>${cp.name}</b><br>
+                    Distance: ${cp.cum_dist.toFixed(2)} km<br>
+                    Elevation: ${cp.ele.toFixed(1)} m
+                </div>`;
+                
+                L.circleMarker([cp.lat, cp.lon], {
+                    radius: cp.name === "Start" || cp.name === "End" ? 8 : 6,
+                    fillColor: color,
+                    color: "#ffffff",
+                    weight: 1.5,
+                    fillOpacity: 0.9
+                })
+                .bindPopup(popupText)
+                .addTo(window.mapLayers);
+            });
+            
+            // Draw POIs
+            pois.forEach(poi => {
+                var color = "purple";
+                var type = poi.type;
+                
+                if (["drinking_water", "water_point", "fountain"].includes(type)) {
+                    color = "#3b82f6";
+                } else if (type === "spring") {
+                    color = "#60a5fa";
+                } else if (["alpine_hut", "wilderness_hut"].includes(type)) {
+                    color = "#047857";
+                } else if (type === "camp_site") {
+                    color = "#f97316";
+                } else if (type === "shelter") {
+                    color = "#10b981";
+                } else if (type === "viewpoint") {
+                    color = "#a855f7";
+                } else if (type === "peak") {
+                    color = "#7c3aed";
+                } else if (type === "phone") {
+                    color = "#ef4444";
+                }
+                
+                var popupText = `
+                <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
+                    <b>${poi.name}</b><br>
+                    Type: ${type.replace(/_/g, ' ').toUpperCase()}<br>
+                    Distance to Route: ${poi.distance.toFixed(1)} m
+                </div>`;
+                
+                L.circleMarker([poi.lat, poi.lon], {
+                    radius: 5,
+                    fillColor: color,
+                    color: "#ffffff",
+                    weight: 1.2,
+                    fillOpacity: 0.95
+                })
+                .bindPopup(popupText)
+                .addTo(window.mapLayers);
+            });
+        } catch(e) {
+            console.error("Error drawing route:", e);
+        }
+    };
+
+    // Handler for hiker updates
+    window.updateHikerPosHandler = function(coords) {
+        if (!coords) return;
+        try {
+            var data = JSON.parse(coords);
+            var map = window.myLeafletMap;
+            if (!map) return;
+            
+            var pos = [data.lat, data.lon];
+            
+            if (!window.hikerMarker) {
+                window.hikerMarker = L.circleMarker(pos, {
+                    radius: 9,
+                    fillColor: "#ef4444",
+                    color: "#ffffff",
+                    weight: 2.5,
+                    fillOpacity: 1.0
+                }).addTo(map);
+            } else {
+                window.hikerMarker.setLatLng(pos);
+            }
+            
+            var popupText = `
+            <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
+                <b>Current simulated position</b><br>
+                Distance Walked: ${data.cum_dist.toFixed(2)} km<br>
+                Altitude: ${data.ele.toFixed(1)} m
+            </div>`;
+            window.hikerMarker.bindPopup(popupText);
+            map.panTo(pos);
+        } catch(e) {
+            console.error("Error updating hiker position:", e);
+        }
+    };
+})();
+</script>
+"""
+
 EMERGENCY_CARD = """
 ## 🚨 IMMEDIATE BACKCOUNTRY EMERGENCY CARD (OFFLINE)
 If you encounter a medical crisis with no cellular signal, follow these basic steps:
@@ -360,8 +527,14 @@ def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, 
         "ele": start_pt["ele"],
         "cum_dist": start_pt["cum_dist"] / 1000.0
     })
+    
+    route_json = json.dumps({
+        "points": data["points"],
+        "checkpoints": data["checkpoints"],
+        "pois": data.get("pois", [])
+    })
         
-    return stats_html, map_iframe, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json
+    return stats_html, route_json, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json
 
 def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
     try:
@@ -383,7 +556,13 @@ def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
             "ele": start_pt["ele"],
             "cum_dist": start_pt["cum_dist"] / 1000.0
         })
-        return stats_html, map_iframe, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json
+        
+        route_json = json.dumps({
+            "points": data["points"],
+            "checkpoints": data["checkpoints"],
+            "pois": data.get("pois", [])
+        })
+        return stats_html, route_json, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json
     except Exception as e:
         return (
             f"<div style='color:#ef4444;'>Error: {e}</div>",
@@ -400,17 +579,19 @@ def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
 
 
 
+
+
 # --- Playback Simulation Loop ---
 def step_simulation(current_idx, route_data, speed):
     if not route_data or "points" not in route_data:
-        return current_idx, gr.update(), gr.update(), gr.update(), gr.update(), ""
+        return current_idx, gr.update(), gr.update(), gr.update(), ""
         
     points = route_data["points"]
     checkpoints = route_data["checkpoints"]
     pois = route_data.get("pois", [])
     
     if current_idx >= len(points):
-        return current_idx, gr.update(), gr.update(), gr.update(), gr.update(), ""
+        return current_idx, gr.update(), gr.update(), gr.update(), ""
         
     step_size = int(speed)
     next_idx = current_idx + step_size
@@ -510,7 +691,8 @@ def step_simulation(current_idx, route_data, speed):
         "ele": ele,
         "cum_dist": cum_dist / 1000.0
     })
-    return next_idx, hud_html, gr.update(), alerts_html, narration_html, hiker_coords_json
+    return next_idx, hud_html, alerts_html, narration_html, hiker_coords_json
+
 
 
 # --- First-Aid Manual Search ---
@@ -558,10 +740,10 @@ def respond(message, history):
 
 # --- Gradio Blocks UI ---
 with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Computer") as demo:
-    # State management
     route_state = gr.State({})
     current_point_idx = gr.State(0)
     hiker_pos_coords = gr.Textbox(visible=False, elem_id="hiker-pos-coords")
+    route_data_json = gr.Textbox(visible=False, elem_id="route-data-json")
     
     hiker_pos_coords.change(
         fn=None,
@@ -569,28 +751,27 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
         outputs=None,
         js="""
         (coords) => {
-            if (!coords) return;
-            try {
-                var data = JSON.parse(coords);
-                var container = document.getElementById("trailhead-map-iframe");
-                if (container) {
-                    var iframe = container.querySelector("iframe");
-                    if (iframe && iframe.contentWindow) {
-                        iframe.contentWindow.postMessage({
-                            type: "update_hiker_pos",
-                            lat: data.lat,
-                            lon: data.lon,
-                            ele: data.ele,
-                            dist: data.cum_dist
-                        }, "*");
-                    }
-                }
-            } catch(e) {
-                console.error("Error parsing hiker coords:", e);
+            if (window.updateHikerPosHandler) {
+                window.updateHikerPosHandler(coords);
             }
         }
         """
     )
+    
+    route_data_json.change(
+        fn=None,
+        inputs=[route_data_json],
+        outputs=None,
+        js="""
+        (routeJson) => {
+            if (window.routeDataChangeHandler) {
+                window.routeDataChangeHandler(routeJson);
+            }
+        }
+        """
+    )
+
+
     
     gr.HTML("""
     <div style='text-align: center; padding: 10px 0;'>
@@ -656,8 +837,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                     stats_display = gr.HTML()
                     
                     # Interactive Map display
-                    map_display = gr.HTML()
-                    
+                    map_display = gr.HTML(value=MAP_HTML_INITIALIZER)
                     # Narration briefing output
                     narration_output = gr.HTML(value="")
                     
@@ -690,11 +870,13 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
 
 
     
+
+    
     # --- Simulation player bindings ---
     timer.tick(
         fn=step_simulation,
         inputs=[current_point_idx, route_state, speed_slider],
-        outputs=[current_point_idx, stats_display, map_display, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[current_point_idx, stats_display, alerts_output, narration_output, hiker_pos_coords]
     )
     
     play_btn.click(
@@ -709,6 +891,8 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
         outputs=[timer]
     )
     
+
+
     def handle_reset(route):
         pts = route.get("points", [])
         if pts:
@@ -721,42 +905,45 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 "ele": start_pt["ele"],
                 "cum_dist": start_pt["cum_dist"] / 1000.0
             })
-            return 0, gr.update(active=False), map_iframe, stats_html, "", "", hiker_coords_json
-        return 0, gr.update(active=False), gr.update(), gr.update(), "", "", ""
+            return 0, gr.update(active=False), stats_html, "", "", hiker_coords_json
+        return 0, gr.update(active=False), gr.update(), "", "", ""
         
     reset_btn.click(
         fn=handle_reset,
         inputs=[route_state],
-        outputs=[current_point_idx, timer, map_display, stats_display, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[current_point_idx, timer, stats_display, alerts_output, narration_output, hiker_pos_coords]
     )
 
+
+
+    
     # --- Route Ingestion Triggers ---
     # Load default route on startup
     demo.load(
         fn=handle_route_update,
         inputs=[preloaded_route, upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
     )
     
     # Preloaded selection change
     preloaded_route.change(
         fn=handle_route_update,
         inputs=[preloaded_route, gr.State(None), gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
     )
     
     # Uploaded file change
     upload_file.change(
         fn=handle_route_update,
         inputs=[gr.State(None), upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
     )
     
     # Fetch route button click
     fetch_route_btn.click(
         fn=handle_ors_fetch_click,
         inputs=[start_pt, end_pt, ors_profile, ors_api_key],
-        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
+        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
     )
 
     
