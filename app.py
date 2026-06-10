@@ -88,15 +88,40 @@ def generate_folium_map(points, checkpoints, pois, hiker_pos=None):
         icon_color = "purple"
         icon_name = "info-sign"
         
-        if "water" in poi_type or "spring" in poi_type:
+        # Color coding:
+        # - drinking_water / water_point / fountain -> blue / glass
+        # - spring -> lightblue / tint
+        # - alpine_hut / wilderness_hut -> darkgreen / home
+        # - camp_site -> orange / fire
+        # - shelter -> green / leaf
+        # - viewpoint -> purple / camera
+        # - peak -> darkpurple / flag
+        # - phone -> red / phone
+        
+        if poi_type in ["drinking_water", "water_point", "fountain"]:
             icon_color = "blue"
+            icon_name = "glass"
+        elif poi_type == "spring":
+            icon_color = "lightblue"
             icon_name = "tint"
-        elif "camp" in poi_type:
+        elif poi_type in ["alpine_hut", "wilderness_hut"]:
+            icon_color = "darkgreen"
+            icon_name = "home"
+        elif poi_type == "camp_site":
             icon_color = "orange"
-            icon_name = "home"
-        elif "hut" in poi_type or "shelter" in poi_type:
+            icon_name = "fire"
+        elif poi_type == "shelter":
             icon_color = "green"
-            icon_name = "home"
+            icon_name = "leaf"
+        elif poi_type == "viewpoint":
+            icon_color = "purple"
+            icon_name = "camera"
+        elif poi_type == "peak":
+            icon_color = "darkpurple"
+            icon_name = "flag"
+        elif poi_type == "phone":
+            icon_color = "red"
+            icon_name = "phone"
             
         popup_text = f"""
         <div style="font-family: 'Outfit', sans-serif; font-size: 11px;">
@@ -112,24 +137,77 @@ def generate_folium_map(points, checkpoints, pois, hiker_pos=None):
             icon=folium.Icon(color=icon_color, icon=icon_name)
         ).add_to(m)
         
-    # Draw hiker's simulated position
-    if hiker_pos:
-        folium.Marker(
-            location=[hiker_pos["lat"], hiker_pos["lon"]],
-            popup=f"Current: {hiker_pos['cum_dist']/1000.0:.2f}km<br>Ele: {hiker_pos['ele']:.1f}m",
-            tooltip="Hiker Position",
-            icon=folium.Icon(color="red", icon="user")
-        ).add_to(m)
-        
     return m._repr_html_()
 
 def get_map_iframe(map_html):
     """
     Helper to bundle raw HTML into a secure, sandboxed base64 data URI iframe.
     """
+    injected_js = """
+    <script>
+    // Poll for Leaflet to load and override L.map to capture the map object
+    (function() {
+        var checkExist = setInterval(function() {
+            if (typeof L !== 'undefined' && L.map) {
+                clearInterval(checkExist);
+                var originalMap = L.map;
+                L.map = function(id, options) {
+                    var m = originalMap(id, options);
+                    window.myLeafletMap = m;
+                    return m;
+                };
+            }
+        }, 50);
+    })();
+
+    // Listen for coordinates update from parent Gradio frame
+    window.addEventListener("message", function(event) {
+        if (event.data && event.data.type === "update_hiker_pos") {
+            var lat = event.data.lat;
+            var lon = event.data.lon;
+            var ele = event.data.ele;
+            var dist = event.data.dist;
+            
+            var map = window.myLeafletMap;
+            if (!map) return;
+            
+            // Check if hikerMarker exists, otherwise create it
+            if (!window.hikerMarker) {
+                var redIcon = L.icon({
+                    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+                    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                    iconSize: [25, 41],
+                    iconAnchor: [12, 41],
+                    popupAnchor: [1, -34],
+                    shadowSize: [41, 41]
+                });
+                window.hikerMarker = L.marker([lat, lon], {icon: redIcon}).addTo(map);
+            } else {
+                window.hikerMarker.setLatLng([lat, lon]);
+            }
+            
+            window.hikerMarker.bindPopup(
+                "<div style='font-family: \\\"Outfit\\\", sans-serif; font-size: 11px;'>" +
+                "<b>Current Position</b><br>" +
+                "Distance: " + dist.toFixed(2) + " km<br>" +
+                "Altitude: " + ele.toFixed(1) + " m" +
+                "</div>"
+            );
+            
+            // Center the map smoothly on the updated coordinate
+            map.panTo([lat, lon]);
+        }
+    });
+    </script>
+    """
+    if "</body>" in map_html:
+        map_html = map_html.replace("</body>", injected_js + "</body>")
+    else:
+        map_html = map_html + injected_js
+        
     b64_html = base64.b64encode(map_html.encode('utf-8')).decode('utf-8')
     iframe_src = f"data:text/html;base64,{b64_html}"
-    return f'<iframe src="{iframe_src}" width="100%" height="520px" style="border:1px solid rgba(245,158,11,0.2); border-radius: 12px;"></iframe>'
+    return f'<div id="trailhead-map-iframe"><iframe src="{iframe_src}" width="100%" height="520px" style="border:1px solid rgba(245,158,11,0.2); border-radius: 12px;"></iframe></div>'
 
 def fetch_ors_route(start_coords, end_coords, profile, api_key):
     """
@@ -262,6 +340,7 @@ def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, 
             0,
             gr.update(active=False),
             "",
+            "",
             ""
         )
         
@@ -273,7 +352,16 @@ def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, 
     except Exception as ex:
         print(f"[app] Error saving enhanced GPX: {ex}")
         
-    return stats_html, map_iframe, checkpoint_table_data, data, 0, gr.update(active=False), "", ""
+    import json
+    start_pt = data["points"][0]
+    hiker_coords_json = json.dumps({
+        "lat": start_pt["lat"],
+        "lon": start_pt["lon"],
+        "ele": start_pt["ele"],
+        "cum_dist": start_pt["cum_dist"] / 1000.0
+    })
+        
+    return stats_html, map_iframe, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json
 
 def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
     try:
@@ -287,7 +375,15 @@ def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
         except Exception as ex:
             print(f"[app] Error saving enhanced GPX: {ex}")
             
-        return stats_html, map_iframe, checkpoint_table_data, data, 0, gr.update(active=False), "", ""
+        import json
+        start_pt = data["points"][0]
+        hiker_coords_json = json.dumps({
+            "lat": start_pt["lat"],
+            "lon": start_pt["lon"],
+            "ele": start_pt["ele"],
+            "cum_dist": start_pt["cum_dist"] / 1000.0
+        })
+        return stats_html, map_iframe, checkpoint_table_data, data, 0, gr.update(active=False), "", "", hiker_coords_json
     except Exception as e:
         return (
             f"<div style='color:#ef4444;'>Error: {e}</div>",
@@ -297,20 +393,24 @@ def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
             0,
             gr.update(active=False),
             "",
+            "",
             ""
         )
+
+
+
 
 # --- Playback Simulation Loop ---
 def step_simulation(current_idx, route_data, speed):
     if not route_data or "points" not in route_data:
-        return current_idx, gr.update(), gr.update(), gr.update(), gr.update()
+        return current_idx, gr.update(), gr.update(), gr.update(), gr.update(), ""
         
     points = route_data["points"]
     checkpoints = route_data["checkpoints"]
     pois = route_data.get("pois", [])
     
     if current_idx >= len(points):
-        return current_idx, gr.update(), gr.update(), gr.update(), gr.update()
+        return current_idx, gr.update(), gr.update(), gr.update(), gr.update(), ""
         
     step_size = int(speed)
     next_idx = current_idx + step_size
@@ -336,9 +436,14 @@ def step_simulation(current_idx, route_data, speed):
                 "drinking_water": "💧",
                 "spring": "💧",
                 "water_point": "💧",
+                "fountain": "⛲",
                 "alpine_hut": "🏡",
+                "wilderness_hut": "🏡",
                 "camp_site": "⛺",
-                "shelter": "🛡️"
+                "shelter": "🛡️",
+                "viewpoint": "👁️",
+                "peak": "🏔️",
+                "phone": "📞"
             }
             icon = icon_map.get(poi["type"], "📍")
             active_alerts.append(f"<div style='background:rgba(245,158,11,0.15); border:1px solid #f59e0b; padding:10px; border-radius:8px; margin-bottom:5px; color:#f59e0b;'>{icon} <b>PROXIMITY:</b> {poi['name']} is {d:.0f}m away! ({poi['type'].replace('_', ' ').title()})</div>")
@@ -357,10 +462,6 @@ def step_simulation(current_idx, route_data, speed):
         eta_text = f"{int(eta_sec // 60)}m {int(eta_sec % 60)}s"
         
     alerts_html = "".join(active_alerts) if active_alerts else "<div style='color:var(--text-muted);'>No active proximity alerts.</div>"
-    
-    # Render updated folium map
-    map_html = generate_folium_map(points, checkpoints, pois, hiker_pos=current_pt)
-    map_iframe = get_map_iframe(map_html)
     
     # Live HUD Panel
     hud_html = f"""
@@ -402,7 +503,15 @@ def step_simulation(current_idx, route_data, speed):
             """
             break
             
-    return next_idx, hud_html, map_iframe, alerts_html, narration_html
+    import json
+    hiker_coords_json = json.dumps({
+        "lat": lat,
+        "lon": lon,
+        "ele": ele,
+        "cum_dist": cum_dist / 1000.0
+    })
+    return next_idx, hud_html, gr.update(), alerts_html, narration_html, hiker_coords_json
+
 
 # --- First-Aid Manual Search ---
 def handle_first_aid_search(query):
@@ -452,6 +561,36 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     # State management
     route_state = gr.State({})
     current_point_idx = gr.State(0)
+    hiker_pos_coords = gr.Textbox(visible=False, elem_id="hiker-pos-coords")
+    
+    hiker_pos_coords.change(
+        fn=None,
+        inputs=[hiker_pos_coords],
+        outputs=None,
+        js="""
+        (coords) => {
+            if (!coords) return;
+            try {
+                var data = JSON.parse(coords);
+                var container = document.getElementById("trailhead-map-iframe");
+                if (container) {
+                    var iframe = container.querySelector("iframe");
+                    if (iframe && iframe.contentWindow) {
+                        iframe.contentWindow.postMessage({
+                            type: "update_hiker_pos",
+                            lat: data.lat,
+                            lon: data.lon,
+                            ele: data.ele,
+                            dist: data.cum_dist
+                        }, "*");
+                    }
+                }
+            } catch(e) {
+                console.error("Error parsing hiker coords:", e);
+            }
+        }
+        """
+    )
     
     gr.HTML("""
     <div style='text-align: center; padding: 10px 0;'>
@@ -549,11 +688,13 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 ]
             )
 
+
+    
     # --- Simulation player bindings ---
     timer.tick(
         fn=step_simulation,
         inputs=[current_point_idx, route_state, speed_slider],
-        outputs=[current_point_idx, stats_display, map_display, alerts_output, narration_output]
+        outputs=[current_point_idx, stats_display, map_display, alerts_output, narration_output, hiker_pos_coords]
     )
     
     play_btn.click(
@@ -571,15 +712,22 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     def handle_reset(route):
         pts = route.get("points", [])
         if pts:
-            # Reformat map to reset pose
             stats_html, map_iframe, checkpoint_table_data = format_route_view(route)
-            return 0, gr.update(active=False), map_iframe, stats_html, "", ""
-        return 0, gr.update(active=False), gr.update(), gr.update(), "", ""
+            import json
+            start_pt = pts[0]
+            hiker_coords_json = json.dumps({
+                "lat": start_pt["lat"],
+                "lon": start_pt["lon"],
+                "ele": start_pt["ele"],
+                "cum_dist": start_pt["cum_dist"] / 1000.0
+            })
+            return 0, gr.update(active=False), map_iframe, stats_html, "", "", hiker_coords_json
+        return 0, gr.update(active=False), gr.update(), gr.update(), "", "", ""
         
     reset_btn.click(
         fn=handle_reset,
         inputs=[route_state],
-        outputs=[current_point_idx, timer, map_display, stats_display, alerts_output, narration_output]
+        outputs=[current_point_idx, timer, map_display, stats_display, alerts_output, narration_output, hiker_pos_coords]
     )
 
     # --- Route Ingestion Triggers ---
@@ -587,29 +735,30 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     demo.load(
         fn=handle_route_update,
         inputs=[preloaded_route, upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output]
+        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
     )
     
     # Preloaded selection change
     preloaded_route.change(
         fn=handle_route_update,
         inputs=[preloaded_route, gr.State(None), gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output]
+        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
     )
     
     # Uploaded file change
     upload_file.change(
         fn=handle_route_update,
         inputs=[gr.State(None), upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
-        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output]
+        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
     )
     
     # Fetch route button click
     fetch_route_btn.click(
         fn=handle_ors_fetch_click,
         inputs=[start_pt, end_pt, ors_profile, ors_api_key],
-        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output]
+        outputs=[stats_display, map_display, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords]
     )
+
     
     # --- RAG Trigger ---
     rag_search_btn.click(

@@ -84,18 +84,23 @@ def calculate_elevation_gain_loss(elevations, threshold=2.0):
 
 def fetch_overpass_pois(min_lat, min_lon, max_lat, max_lon):
     """
-    Fetch POIs (water, spring, huts, camps, shelter) from Overpass API in the bounding box.
+    Fetch POIs (water, spring, huts, camps, shelter, viewpoint, peak, phone) from Overpass API in the bounding box.
     """
     url = "https://overpass-api.de/api/interpreter"
     query = f"""
-    [out:json][timeout:20];
+    [out:json][timeout:25];
     (
       node["amenity"="drinking_water"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
       node["natural"="spring"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
       node["amenity"="water_point"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["amenity"="fountain"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
       node["tourism"="alpine_hut"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["tourism"="wilderness_hut"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
       node["tourism"="camp_site"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
       node["amenity"="shelter"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["tourism"="viewpoint"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["natural"="peak"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["amenity"="phone"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
     );
     out body;
     """
@@ -104,7 +109,7 @@ def fetch_overpass_pois(min_lat, min_lon, max_lat, max_lon):
     }
     try:
         print(f"[gpx_parser] Querying Overpass API for POIs in bbox: [{min_lat:.5f}, {min_lon:.5f}, {max_lat:.5f}, {max_lon:.5f}]...")
-        response = requests.post(url, data={'data': query}, headers=headers, timeout=15)
+        response = requests.get(url, params={'data': query}, headers=headers, timeout=25)
         if response.status_code == 200:
             data = response.json()
             elements = data.get("elements", [])
