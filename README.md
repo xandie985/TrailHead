@@ -3,15 +3,15 @@ title: Trailhead
 emoji: 🌲
 colorFrom: green
 colorTo: blue
-sdk: docker
-app_port: 7860
+sdk: gradio
+sdk_version: 5.6.0
+app_file: app.py
 pinned: false
 ---
 
 # 🌲 Trailhead — Tactical Trail Computer & Route Planner
 
 [![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces)
-[![Docker](https://img.shields.io/badge/Docker-Enabled-blue.svg)](./Dockerfile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **"Plan online at basecamp, trek offline on the trail."**
@@ -106,22 +106,14 @@ Make sure you have Python 3.11+ installed.
 
 ---
 
-## 🐳 Docker Setup & Hugging Face Spaces
+## 🤗 Hugging Face Spaces Setup
 
-This project is fully ready to be deployed as a Docker container or hosted directly as a Hugging Face Space.
-
-### Run locally with Docker
-Build and run the Docker container:
-```bash
-docker build -t trailhead-computer .
-docker run -p 7860:7860 trailhead-computer
-```
+This project is fully compatible with Hugging Face Spaces using the Gradio SDK.
 
 ### Deploy to Hugging Face Spaces
-1. Create a new Space on [Hugging Face](https://huggingface.co/new-space) using the **Docker** SDK.
-2. Select the **Blank** template or copy the `Dockerfile` directly.
-3. Push the codebase to your Hugging Face Space repository.
-4. The container automatically downloads the `google_gemma-4-E2B-it-Q4_K_M.gguf` model during build time, ensuring the Space starts up instantly without any downloading delays on first launch.
+1. Create a new Space on [Hugging Face](https://huggingface.co/new-space) using the **Gradio** SDK.
+2. Push the codebase directly to your Hugging Face Space repository.
+3. The GGUF LLM and Whisper ASR models will download automatically upon first request at runtime and cache locally for offline use.
 
 ---
 

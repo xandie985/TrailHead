@@ -451,6 +451,12 @@ def parse_gpx_file(file_path, cache_dir="./temp", buffer_meters=150.0):
     except Exception as e:
         print(f"[gpx_parser] Cache write error: {e}")
         
+    # Start offline map tiles pre-fetching in background
+    try:
+        start_tile_download(result)
+    except Exception as e:
+        print(f"[gpx_parser] Error starting background tile download: {e}")
+        
     return result
 
 def generate_checkpoints(points_data, interval_meters=1000.0):
@@ -508,3 +514,109 @@ def generate_checkpoints(points_data, interval_meters=1000.0):
         })
         
     return checkpoints
+
+def deg2num(lat_deg, lon_deg, zoom):
+    """Convert latitude and longitude to OSM tile X and Y coordinates at a given zoom level."""
+    lat_rad = math.radians(lat_deg)
+    n = 2.0 ** zoom
+    xtile = int((lon_deg + 180.0) / 360.0 * n)
+    ytile = int((1.0 - math.log(math.tan(lat_rad) + (1.0 / math.cos(lat_rad))) / math.pi) / 2.0 * n)
+    return (xtile, ytile)
+
+def download_tiles_for_bbox(min_lat, min_lon, max_lat, max_lon, output_dir="./assets/tiles", max_tiles=120):
+    """
+    Download OSM map tiles for a given bounding box at zoom levels 13 to 16.
+    Restricts zoom levels if the bounding box covers too many tiles.
+    """
+    import os
+    import requests
+    import time
+    
+    os.makedirs(output_dir, exist_ok=True)
+    zooms = [13, 14, 15, 16]
+    
+    # Calculate total tiles across zoom levels
+    tile_requests = []
+    for zoom in zooms:
+        x1, y1 = deg2num(max_lat, min_lon, zoom)
+        x2, y2 = deg2num(min_lat, max_lon, zoom)
+        
+        x_start, x_end = min(x1, x2), max(x1, x2)
+        y_start, y_end = min(y1, y2), max(y1, y2)
+        
+        for x in range(x_start, x_end + 1):
+            for y in range(y_start, y_end + 1):
+                tile_requests.append((zoom, x, y))
+                
+    total_tiles = len(tile_requests)
+    print(f"[tiles] Bounding box requires {total_tiles} tiles across zoom levels 13-16.")
+    
+    if total_tiles > max_tiles:
+        print(f"[tiles] Bounding box too large ({total_tiles} > {max_tiles}). Restricting to zoom 13-15.")
+        zooms = [13, 14, 15]
+        tile_requests = []
+        for zoom in zooms:
+            x1, y1 = deg2num(max_lat, min_lon, zoom)
+            x2, y2 = deg2num(min_lat, max_lon, zoom)
+            x_start, x_end = min(x1, x2), max(x1, x2)
+            y_start, y_end = min(y1, y2), max(y1, y2)
+            for x in range(x_start, x_end + 1):
+                for y in range(y_start, y_end + 1):
+                    tile_requests.append((zoom, x, y))
+        total_tiles = len(tile_requests)
+        print(f"[tiles] Bounding box now requires {total_tiles} tiles.")
+        
+    headers = {
+        'User-Agent': 'TrailheadTrekPlanner/1.0 (skushwaha@hckthn.com)'
+    }
+    
+    downloaded = 0
+    skipped = 0
+    for zoom, x, y in tile_requests:
+        tile_dir = os.path.join(output_dir, str(zoom), str(x))
+        os.makedirs(tile_dir, exist_ok=True)
+        tile_path = os.path.join(tile_dir, f"{y}.png")
+        
+        if os.path.exists(tile_path):
+            skipped += 1
+            continue
+            
+        url = f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+        try:
+            response = requests.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                with open(tile_path, "wb") as f:
+                    f.write(response.content)
+                downloaded += 1
+                # Small sleep to respect OSM servers usage policy
+                time.sleep(0.05)
+            else:
+                print(f"[tiles] Failed to download tile {zoom}/{x}/{y}: HTTP {response.status_code}")
+        except Exception as e:
+            print(f"[tiles] Exception downloading tile {zoom}/{x}/{y}: {e}")
+            
+    print(f"[tiles] Finished tile sync: downloaded {downloaded}, cached {skipped} (Total: {total_tiles})")
+    return downloaded, skipped, total_tiles
+
+def start_tile_download(data):
+    """Trigger the offline tile downloading in a background thread."""
+    import threading
+    points = data.get("points", [])
+    if not points:
+        return
+    lats = [pt["lat"] for pt in points]
+    lons = [pt["lon"] for pt in points]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+    
+    # Buffer coordinates slightly to ensure surrounding area is fully covered
+    min_lat -= 0.005
+    max_lat += 0.005
+    min_lon -= 0.005
+    max_lon += 0.005
+    
+    t = threading.Thread(target=download_tiles_for_bbox, args=(min_lat, min_lon, max_lat, max_lon))
+    t.daemon = True
+    t.start()
+    print("[tiles] Started background thread to sync offline tiles.")
+

@@ -156,3 +156,8 @@ temp/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Local databases
+*.db
+*.db-journal
+
