@@ -1050,26 +1050,60 @@ def handle_generate_story(route_state_val):
     for idx, l in enumerate(logs_chron):
         journal_text += f"\n- Log #{idx+1} ({l['timestamp']}) at Km {l['cum_dist']:.2f} (Alt: {l['ele']:.1f}m):\n  \"{l['transcript']}\"\n"
         
-    # Compile route stats
-    stats_text = "Trek stats:\n"
+    # 1. Compile route stats (Trek details)
+    stats_text = "Trek Details:\n"
     if route_state_val and "total_distance_km" in route_state_val:
         stats_text += f"- Total Distance: {route_state_val['total_distance_km']:.2f} km\n"
-        stats_text += f"- Elevation Gain: {route_state_val['elevation_gain_m']:.1f} m\n"
+        stats_text += f"- Total Elevation Gain: {route_state_val['elevation_gain_m']:.1f} m\n"
+        stats_text += f"- Total Elevation Loss: {route_state_val.get('elevation_loss_m', 0.0):.1f} m\n"
         stats_text += f"- Altitude Range: {route_state_val['min_elevation_m']:.1f}m - {route_state_val['max_elevation_m']:.1f}m\n"
     else:
         stats_text += "- Trento Route Simulation\n"
         
+    # 2. Compile checkpoints
+    checkpoints_text = "Checkpoints & Milestones:\n"
+    if route_state_val and "checkpoints" in route_state_val and route_state_val["checkpoints"]:
+        for cp in route_state_val["checkpoints"]:
+            checkpoints_text += f"- {cp['name']} at Km {cp['cum_dist']:.2f} (Altitude: {cp['ele']:.1f}m)\n"
+    else:
+        checkpoints_text += "- Start and End checkpoints along the trail.\n"
+        
+    # 3. Compile amenities (POIs)
+    amenities_text = "Amenities & Points of Interest along the Route:\n"
+    if route_state_val and "pois" in route_state_val and route_state_val["pois"]:
+        for poi in route_state_val["pois"]:
+            poi_name = poi.get("name", "Unnamed")
+            poi_type = poi.get("type", "Point of Interest").replace("_", " ").title()
+            dist = poi.get("distance", 0.0)
+            track_idx = poi.get("track_index", -1)
+            dist_str = ""
+            if track_idx != -1 and "points" in route_state_val and track_idx < len(route_state_val["points"]):
+                poi_cum_dist = route_state_val["points"][track_idx]["cum_dist"] / 1000.0
+                dist_str = f"at approx. Km {poi_cum_dist:.2f}"
+            amenities_text += f"- {poi_name} ({poi_type}) {dist_str} (located {dist:.1f} meters off the trail)\n"
+    else:
+        amenities_text += "- General alpine huts, shelters, and water streams close to the path.\n"
+        
     system_prompt = (
         "You are a classic wilderness novelist and explorer. Write a compelling, first-person "
-        "adventure story summarizing the trek based ONLY on the provided route statistics and the hiker's voice journal entries. "
-        "Do not invent new landmarks, water sources, or hazards that are not mentioned in the voice logs. "
-        "Keep the tone rugged, epic, and highly tactical. Organise the story with headings corresponding to distance milestones. "
+        "adventure story summarizing the trek based on the provided trek details, checkpoints, amenities, "
+        "and the hiker's voice journal logs.\n"
+        "Emphasize the hiker's voice notes, detailing their personal reflections, physical state, and "
+        "wilderness observations. Incorporate the trek details (distance, elevation, altitude) to frame the physical challenge. "
+        "Weave in the amenities (water sources, campsites, alpine huts, shelters, viewpoints) as milestones or locations where the hiker is resting, "
+        "refilling water, or finding shelter.\n"
+        "Do not invent external landmarks, voice notes, or major events not provided. Keep the tone rugged, epic, and highly tactical. "
+        "Organize the story using headings corresponding to distance milestones.\n"
         "At the end, sign off as 'Trailhead AI Storyteller'."
     )
     
     prompt = f"""Here are the details of my wilderness journey:
 
 {stats_text}
+
+{checkpoints_text}
+
+{amenities_text}
 
 Here are my recorded voice logs during the trek:
 {journal_text}
