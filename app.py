@@ -607,7 +607,12 @@ def format_route_view(data):
 def handle_route_update(preloaded_sel, uploaded_file):
     file_path = PRELOADED_ROUTE_PATH
     if uploaded_file is not None:
-        file_path = uploaded_file.name
+        if isinstance(uploaded_file, list) and len(uploaded_file) > 0:
+            uploaded_file = uploaded_file[0]
+        if isinstance(uploaded_file, dict):
+            file_path = uploaded_file.get("path") or uploaded_file.get("name") or PRELOADED_ROUTE_PATH
+        else:
+            file_path = getattr(uploaded_file, "path", getattr(uploaded_file, "name", PRELOADED_ROUTE_PATH))
         
     try:
         data = parse_gpx_file(file_path)
@@ -1223,8 +1228,16 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                     rag_output = gr.Markdown(value="*Manual results will be displayed here.*")
                     
         with gr.TabItem("💬 Wilderness Guide AI"):
+            # Dynamically configure chatbot to use "messages" type if on Gradio 5
+            gradio_version = getattr(gr, "__version__", "5.0.0")
+            if gradio_version.startswith("6"):
+                chatbot_component = gr.Chatbot()
+            else:
+                chatbot_component = gr.Chatbot(type="messages")
+                
             gr.ChatInterface(
                 respond,
+                chatbot=chatbot_component,
                 examples=[
                     "What gear checklist do I need for a 3-day high-altitude trek?",
                     "How do I treat a sprained ankle on the trail?",
