@@ -1,4 +1,4 @@
-gradio>=5.0.0
+gradio==5.15.0
 pandas
 numpy
 requests
@@ -6,5 +6,4 @@ huggingface_hub>=0.25.1,<1.0.0
 gpxpy
 folium
 plotly
-pywhispercpp
-miniaudio
+pydantic>=2.0.0,<2.11.0

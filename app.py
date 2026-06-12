@@ -13,8 +13,9 @@ import src.database as db
 os.makedirs("./temp", exist_ok=True)
 db.init_db()
 
-# Preloaded route path
-PRELOADED_ROUTE_PATH = r"C:\Users\skushwaha\Documents\hckthn\TrailHead\Routes\track_5-14724236830.gpx"
+# Preloaded route path — resolve relative to this file for cross-platform compatibility
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+PRELOADED_ROUTE_PATH = os.path.join(_APP_DIR, "Routes", "track_5-14724236830.gpx")
 
 MAP_HTML_INITIALIZER = """
 <div id="trailhead-leaflet-map" style="height: 520px; width: 100%; border:1px solid rgba(245,158,11,0.2); border-radius: 12px; background: #0c1014; z-index: 1;"></div>
