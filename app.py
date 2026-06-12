@@ -604,7 +604,7 @@ def format_route_view(data):
         
     return stats_html, map_iframe, checkpoint_table_data
 
-def handle_route_update(preloaded_sel, uploaded_file, start_coords, end_coords, profile, api_key):
+def handle_route_update(preloaded_sel, uploaded_file):
     file_path = PRELOADED_ROUTE_PATH
     if uploaded_file is not None:
         file_path = uploaded_file.name
@@ -1080,7 +1080,8 @@ Please write a cohesive first-person adventure story of my trek."""
 
 # --- Gradio Blocks UI ---
 with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Computer") as demo:
-    route_state = gr.State({})
+    route_state = gr.State(None)
+    null_state = gr.State(None)
     current_point_idx = gr.State(0)
     hiker_pos_coords = gr.Textbox(visible=False, elem_id="hiker-pos-coords")
     route_data_json = gr.Textbox(visible=False, elem_id="route-data-json")
@@ -1289,7 +1290,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
 
 
     def handle_reset(route):
-        pts = route.get("points", [])
+        pts = route.get("points", []) if route else []
         if pts:
             stats_html, map_iframe, checkpoint_table_data = format_route_view(route)
             import json
@@ -1317,7 +1318,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     # Load default route on startup
     demo.load(
         fn=handle_route_update,
-        inputs=[preloaded_route, upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
+        inputs=[preloaded_route, upload_file],
         outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot],
         js=MAP_INIT_JS
     )
@@ -1325,14 +1326,14 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     # Preloaded selection change
     preloaded_route.change(
         fn=handle_route_update,
-        inputs=[preloaded_route, gr.State(None), gr.State(""), gr.State(""), gr.State(""), gr.State("")],
+        inputs=[preloaded_route, null_state],
         outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
     
     # Uploaded file change
     upload_file.change(
         fn=handle_route_update,
-        inputs=[gr.State(None), upload_file, gr.State(""), gr.State(""), gr.State(""), gr.State("")],
+        inputs=[null_state, upload_file],
         outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
     
