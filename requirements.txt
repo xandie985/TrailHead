@@ -7,7 +7,12 @@ gpxpy
 folium
 plotly
 pydantic>=2.0.0,<2.11.0
+Pillow
+# ASR: transformers + torch as fallback for Hugging Face (no pywhispercpp available there)
 transformers
 torch
 soundfile
-
+# Local-only ASR dependencies (optional — only work when pywhispercpp native binaries are present)
+# pywhispercpp       # Uncomment for local GPU-accelerated ASR
+# miniaudio          # Uncomment for local audio resampling (required by pywhispercpp path)
+# llama-cpp-python   # Uncomment to run local GGUF LLM instead of mock backend
