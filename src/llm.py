@@ -103,31 +103,35 @@ def _init_whisper():
         print(f"[llm.py] Error loading whisper.cpp ASR model: {e}")
         return None
 
-# --- Hugging Face Inference API ASR fallback ---
-_hf_client = None
+# --- Transformers ASR fallback ---
+_transformers_asr = None
 
-def _init_hf_client():
-    """Lazy initialization of Hugging Face InferenceClient for fallback ASR."""
-    global _hf_client
-    if _hf_client is not None:
-        return _hf_client
+def _init_transformers_asr():
+    """Lazy initialization of transformers Whisper pipeline for fallback ASR."""
+    global _transformers_asr
+    if _transformers_asr is not None:
+        return _transformers_asr
     try:
-        from huggingface_hub import InferenceClient
-        # Automatically detects HF_TOKEN from Hugging Face Space environment
-        _hf_client = InferenceClient()
-        print("[llm.py] Hugging Face InferenceClient for ASR initialized successfully!")
-        return _hf_client
+        from transformers import pipeline
+        print("[llm.py] Loading transformers Whisper-tiny model for fallback ASR...")
+        _transformers_asr = pipeline(
+            "automatic-speech-recognition",
+            model="openai/whisper-tiny",
+            device="cpu"
+        )
+        print("[llm.py] transformers ASR model loaded successfully!")
+        return _transformers_asr
     except ImportError:
-        print("[llm.py] huggingface_hub not installed. ASR will use mock fallback.")
+        print("[llm.py] transformers or torch not installed. ASR will use mock fallback.")
         return None
     except Exception as e:
-        print(f"[llm.py] Error loading HF InferenceClient: {e}")
+        print(f"[llm.py] Error loading transformers ASR model: {e}")
         return None
 
 def transcribe_audio(audio_path, prompt=""):
     """
     Transcribe audio file to text using whisper.cpp (offline, lightweight).
-    Falls back to Hugging Face Inference API or mock transcription if whisper.cpp is unavailable.
+    Falls back to transformers or mock transcription if whisper.cpp is unavailable.
     """
     if not audio_path or not os.path.exists(audio_path):
         print("[llm.py] Audio file not found, using mock ASR.")
@@ -167,7 +171,7 @@ def transcribe_audio(audio_path, prompt=""):
                 except: pass
                 
             if not transcription:
-                print("[llm.py] Whisper returned empty transcription, trying HF API fallback.")
+                print("[llm.py] Whisper returned empty transcription, trying transformers fallback.")
             else:
                 print(f"[llm.py] ASR Transcription: \"{transcription}\"")
                 return transcription
@@ -177,29 +181,18 @@ def transcribe_audio(audio_path, prompt=""):
                 except: pass
             print(f"[llm.py] Error during whisper.cpp transcription: {e}")
 
-    # Fallback to Hugging Face Inference API ASR
-    hf_client = _init_hf_client()
-    if hf_client is not None:
+    # Fallback to transformers ASR
+    asr_pipe = _init_transformers_asr()
+    if asr_pipe is not None:
         try:
-            print(f"[llm.py] Transcribing audio using Hugging Face Inference API: {audio_path}")
-            with open(audio_path, "rb") as f:
-                audio_bytes = f.read()
-            result = hf_client.automatic_speech_recognition(
-                audio_bytes,
-                model="openai/whisper-large-v3-turbo"
-            )
-            
-            # Extract transcription string
-            if isinstance(result, dict):
-                transcription = result.get("text", "").strip()
-            else:
-                transcription = getattr(result, "text", str(result)).strip()
-                
+            print(f"[llm.py] Transcribing audio using transformers: {audio_path}")
+            result = asr_pipe(audio_path)
+            transcription = result.get("text", "").strip()
             if transcription:
-                print(f"[llm.py] ASR (HF API) Transcription: \"{transcription}\"")
+                print(f"[llm.py] ASR (transformers) Transcription: \"{transcription}\"")
                 return transcription
         except Exception as e:
-            print(f"[llm.py] Error during Hugging Face Inference API transcription: {e}")
+            print(f"[llm.py] Error during transformers transcription: {e}")
 
     return _mock_transcribe_audio(prompt)
 
