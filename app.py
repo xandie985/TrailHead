@@ -1457,7 +1457,14 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     try:
-        demo.launch(server_name="0.0.0.0", server_port=port)
+        demo.launch(
+            server_name="0.0.0.0", 
+            server_port=port,
+            allowed_paths=[os.path.abspath(".")]
+        )
     except OSError:
         print(f"[app] Port {port} is busy. Falling back to automatic port selection...")
-        demo.launch(server_name="127.0.0.1")
+        demo.launch(
+            server_name="127.0.0.1",
+            allowed_paths=[os.path.abspath(".")]
+        )

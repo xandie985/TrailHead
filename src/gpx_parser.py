@@ -280,8 +280,16 @@ def parse_gpx_file(file_path, cache_dir="./temp", buffer_meters=150.0):
     
     # Check cache first
     file_name = os.path.basename(file_path)
-    cache_path = os.path.join(cache_dir, f"{file_name}.cache.json")
-    if os.path.exists(cache_path):
+    cache_path_temp = os.path.join(cache_dir, f"{file_name}.cache.json")
+    cache_path_routes = os.path.join(os.path.dirname(os.path.abspath(file_path)), "cache", f"{file_name}.cache.json")
+    
+    cache_path = None
+    if os.path.exists(cache_path_temp):
+        cache_path = cache_path_temp
+    elif os.path.exists(cache_path_routes):
+        cache_path = cache_path_routes
+        
+    if cache_path:
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
                 print(f"[gpx_parser] Loading cached GPX data from {cache_path}")
