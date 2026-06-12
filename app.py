@@ -1039,7 +1039,7 @@ def handle_clear_journal():
     db.clear_journal_logs()
     return "", [], "<span style='color:#ef4444;'>Cleared all voice journal logs.</span>"
 
-def handle_generate_story(route_state_val):
+def handle_generate_story(route_state_val, style):
     logs = db.get_journal_entries()
     if not logs:
         return "### 📖 No Voice Logs Found\n\nPlease record and save some voice journal entries during your simulated trek before generating your AI story!", None
@@ -1084,10 +1084,26 @@ def handle_generate_story(route_state_val):
     else:
         amenities_text += "- General alpine huts, shelters, and water streams close to the path.\n"
         
+    if style == "Minimal Technical Gist":
+        style_instruction = (
+            "Write a concise, bullet-pointed, and highly technical summary of the trek. "
+            "Focus on the exact telemetry (distances, altitudes, checkpoints reached), voice note transcripts, "
+            "and amenities used (water sources, huts, campsites, viewpoints). Keep it factual, objective, and brief."
+        )
+    else:  # "Social Media Post (Elaborative)"
+        style_instruction = (
+            "Write a highly engaging, elaborative, and inspiring story formatted as a social media post (e.g., for Instagram or LinkedIn) "
+            "targeted at an audience of outdoor enthusiasts.\n"
+            "Include emojis, a narrative hook, paragraphs of descriptions of the journey's highs and lows, "
+            "reflections on the voice notes, details about the amenities (water sources, viewpoints, campsites) encountered, "
+            "and end with relevant hashtags (e.g., #HikingAdventurer, #Trailhead, #BackcountryExploration)."
+        )
+
     system_prompt = (
         "You are a classic wilderness novelist and explorer. Write a compelling, first-person "
         "adventure story summarizing the trek based on the provided trek details, checkpoints, amenities, "
         "and the hiker's voice journal logs.\n"
+        f"Format Style: {style_instruction}\n"
         "Emphasize the hiker's voice notes, detailing their personal reflections, physical state, and "
         "wilderness observations. Incorporate the trek details (distance, elevation, altitude) to frame the physical challenge. "
         "Weave in the amenities (water sources, campsites, alpine huts, shelters, viewpoints) as milestones or locations where the hiker is resting, "
@@ -1308,6 +1324,11 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 with gr.Column(scale=2):
                     gr.Markdown("## 📖 Post-Trek AI Storyteller")
                     gr.Markdown("Click below to compile all your saved voice journal logs and route statistics into an AI-narrated story of your adventure!")
+                    story_style = gr.Radio(
+                        choices=["Minimal Technical Gist", "Social Media Post (Elaborative)"],
+                        value="Social Media Post (Elaborative)",
+                        label="Story Style / Format"
+                    )
                     generate_story_btn = gr.Button("🎬 Generate AI Trek Story", variant="primary")
                     story_output = gr.Markdown(value="*Your adventure narrative will be generated here.*")
                 with gr.Column(scale=1):
@@ -1422,7 +1443,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     
     generate_story_btn.click(
         fn=handle_generate_story,
-        inputs=[route_state],
+        inputs=[route_state, story_style],
         outputs=[story_output, story_download]
     )
     
