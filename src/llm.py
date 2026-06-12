@@ -97,69 +97,104 @@ def _init_whisper():
         print("[llm.py] whisper.cpp ASR model loaded successfully!")
         return _whisper_model
     except ImportError:
-        print("[llm.py] pywhispercpp not installed. ASR will use mock fallback.")
+        print("[llm.py] pywhispercpp not installed. ASR will try transformers fallback.")
         return None
     except Exception as e:
         print(f"[llm.py] Error loading whisper.cpp ASR model: {e}")
         return None
 
+# --- Transformers ASR fallback ---
+_transformers_asr = None
+
+def _init_transformers_asr():
+    """Lazy initialization of transformers Whisper pipeline for fallback ASR."""
+    global _transformers_asr
+    if _transformers_asr is not None:
+        return _transformers_asr
+    try:
+        from transformers import pipeline
+        print("[llm.py] Loading transformers Whisper-tiny model for fallback ASR...")
+        _transformers_asr = pipeline(
+            "automatic-speech-recognition",
+            model="openai/whisper-tiny",
+            device="cpu"
+        )
+        print("[llm.py] transformers ASR model loaded successfully!")
+        return _transformers_asr
+    except ImportError:
+        print("[llm.py] transformers or torch not installed. ASR will use mock fallback.")
+        return None
+    except Exception as e:
+        print(f"[llm.py] Error loading transformers ASR model: {e}")
+        return None
+
 def transcribe_audio(audio_path, prompt=""):
     """
     Transcribe audio file to text using whisper.cpp (offline, lightweight).
-    Falls back to mock transcription if whisper.cpp is unavailable.
+    Falls back to transformers or mock transcription if whisper.cpp is unavailable.
     """
     if not audio_path or not os.path.exists(audio_path):
         print("[llm.py] Audio file not found, using mock ASR.")
         return _mock_transcribe_audio(prompt)
     
     whisper = _init_whisper()
-    if whisper is None:
-        print("[llm.py] whisper.cpp unavailable, using mock ASR fallback.")
-        return _mock_transcribe_audio(prompt)
-    
-    temp_wav_path = None
-    try:
+    if whisper is not None:
+        temp_wav_path = None
         try:
-            import miniaudio
-            import wave
-            print(f"[llm.py] Decoding and resampling audio to 16kHz mono WAV using miniaudio...")
-            sound = miniaudio.decode_file(audio_path, nchannels=1, sample_rate=16000)
-            
-            # Save to temp WAV file
-            temp_wav_path = audio_path + ".temp_16k.wav"
-            with wave.open(temp_wav_path, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)  # 16-bit PCM
-                wav_file.setframerate(16000)
-                wav_file.writeframes(sound.samples)
-            
-            audio_path = temp_wav_path
-            print(f"[llm.py] Resampled audio saved to: {audio_path}")
-        except ImportError:
-            print("[llm.py] miniaudio not installed. Passing audio file directly to whisper.cpp.")
-        except Exception as e:
-            print(f"[llm.py] miniaudio transcoding failed: {e}. Passing original file directly.")
+            try:
+                import miniaudio
+                import wave
+                print(f"[llm.py] Decoding and resampling audio to 16kHz mono WAV using miniaudio...")
+                sound = miniaudio.decode_file(audio_path, nchannels=1, sample_rate=16000)
+                
+                # Save to temp WAV file
+                temp_wav_path = audio_path + ".temp_16k.wav"
+                with wave.open(temp_wav_path, "wb") as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(2)  # 16-bit PCM
+                    wav_file.setframerate(16000)
+                    wav_file.writeframes(sound.samples)
+                
+                audio_path = temp_wav_path
+                print(f"[llm.py] Resampled audio saved to: {audio_path}")
+            except ImportError:
+                print("[llm.py] miniaudio not installed. Passing audio file directly to whisper.cpp.")
+            except Exception as e:
+                print(f"[llm.py] miniaudio transcoding failed: {e}. Passing original file directly.")
 
-        print(f"[llm.py] Transcribing audio: {audio_path}")
-        segments = whisper.transcribe(audio_path)
-        transcription = " ".join([seg.text.strip() for seg in segments]).strip()
-        
-        if temp_wav_path and os.path.exists(temp_wav_path):
-            try: os.remove(temp_wav_path)
-            except: pass
+            print(f"[llm.py] Transcribing audio: {audio_path}")
+            segments = whisper.transcribe(audio_path)
+            transcription = " ".join([seg.text.strip() for seg in segments]).strip()
             
-        if not transcription:
-            print("[llm.py] Whisper returned empty transcription, using mock fallback.")
-            return _mock_transcribe_audio(prompt)
-        
-        print(f"[llm.py] ASR Transcription: \"{transcription}\"")
-        return transcription
-    except Exception as e:
-        if temp_wav_path and os.path.exists(temp_wav_path):
-            try: os.remove(temp_wav_path)
-            except: pass
-        print(f"[llm.py] Error during whisper.cpp transcription: {e}")
-        return _mock_transcribe_audio(prompt)
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                try: os.remove(temp_wav_path)
+                except: pass
+                
+            if not transcription:
+                print("[llm.py] Whisper returned empty transcription, trying transformers fallback.")
+            else:
+                print(f"[llm.py] ASR Transcription: \"{transcription}\"")
+                return transcription
+        except Exception as e:
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                try: os.remove(temp_wav_path)
+                except: pass
+            print(f"[llm.py] Error during whisper.cpp transcription: {e}")
+
+    # Fallback to transformers ASR
+    asr_pipe = _init_transformers_asr()
+    if asr_pipe is not None:
+        try:
+            print(f"[llm.py] Transcribing audio using transformers: {audio_path}")
+            result = asr_pipe(audio_path)
+            transcription = result.get("text", "").strip()
+            if transcription:
+                print(f"[llm.py] ASR (transformers) Transcription: \"{transcription}\"")
+                return transcription
+        except Exception as e:
+            print(f"[llm.py] Error during transformers transcription: {e}")
+
+    return _mock_transcribe_audio(prompt)
 
 def _mock_transcribe_audio(prompt=""):
     """Mock ASR fallback when whisper.cpp is not available."""

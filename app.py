@@ -762,19 +762,21 @@ def handle_ors_fetch_click(start_coords, end_coords, profile, api_key):
 # --- Playback Simulation Loop ---
 def step_simulation(current_idx, route_data, speed):
     if not route_data or "points" not in route_data:
-        return current_idx, gr.update(), gr.update(), gr.update(), "", gr.update()
+        return current_idx, gr.update(), gr.update(), gr.update(), "", gr.update(), gr.update()
         
     points = route_data["points"]
     checkpoints = route_data["checkpoints"]
     pois = route_data.get("pois", [])
     
-    if current_idx >= len(points):
-        return current_idx, gr.update(), gr.update(), gr.update(), "", gr.update()
+    if current_idx >= len(points) - 1:
+        return current_idx, gr.update(), gr.update(), gr.update(), "", gr.update(), gr.update(active=False)
         
     step_size = int(speed)
     next_idx = current_idx + step_size
-    if next_idx >= len(points):
+    timer_update = gr.update()
+    if next_idx >= len(points) - 1:
         next_idx = len(points) - 1
+        timer_update = gr.update(active=False)
         
     current_pt = points[next_idx]
     
@@ -877,7 +879,7 @@ def step_simulation(current_idx, route_data, speed):
         if fig:
             plot_update = fig
             
-    return next_idx, hud_html, alerts_html, narration_html, hiker_coords_json, plot_update
+    return next_idx, hud_html, alerts_html, narration_html, hiker_coords_json, plot_update, timer_update
 
 
 
@@ -1286,7 +1288,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     timer.tick(
         fn=step_simulation,
         inputs=[current_point_idx, route_state, speed_slider],
-        outputs=[current_point_idx, stats_display, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
+        outputs=[current_point_idx, stats_display, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot, timer]
     )
     
     play_btn.click(
