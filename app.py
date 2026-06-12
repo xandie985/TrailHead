@@ -1208,7 +1208,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 checkpoint_table = gr.DataFrame(
                     headers=["Checkpoint", "Coordinates", "Cumulative Distance", "Altitude"],
                     datatype=["str", "str", "str", "str"],
-                    column_count=(4, "fixed")
+                    col_count=(4, "fixed")
                 )
                 
         with gr.TabItem("🩺 Wilderness First-Aid"):
