@@ -16,6 +16,8 @@ db.init_db()
 # Preloaded route path — resolve relative to this file for cross-platform compatibility
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 PRELOADED_ROUTE_PATH = os.path.join(_APP_DIR, "Routes", "track_5-14724236830.gpx")
+# Bundled pre-parsed cache for the Trento track (includes POIs — avoids Overpass API on HF)
+PRELOADED_CACHE_PATH = os.path.join(_APP_DIR, "src", "data", "trento_route_cache.json")
 
 MAP_HTML_INITIALIZER = """
 <div id="trailhead-leaflet-map" style="height: 520px; width: 100%; border:1px solid rgba(245,158,11,0.2); border-radius: 12px; background: #0c1014; z-index: 1;"></div>
@@ -607,7 +609,9 @@ def format_route_view(data):
 
 def handle_route_update(preloaded_sel, uploaded_file):
     file_path = PRELOADED_ROUTE_PATH
+    is_preloaded = True
     if uploaded_file is not None:
+        is_preloaded = False
         if isinstance(uploaded_file, list) and len(uploaded_file) > 0:
             uploaded_file = uploaded_file[0]
         if isinstance(uploaded_file, dict):
@@ -616,7 +620,15 @@ def handle_route_update(preloaded_sel, uploaded_file):
             file_path = getattr(uploaded_file, "path", getattr(uploaded_file, "name", PRELOADED_ROUTE_PATH))
         
     try:
-        data = parse_gpx_file(file_path)
+        # For the preloaded Trento route, use the bundled cache (includes 4 POIs).
+        # This avoids Overpass API calls on Hugging Face Spaces where network access may be restricted.
+        import json as _json
+        if is_preloaded and os.path.exists(PRELOADED_CACHE_PATH):
+            print(f"[app] Loading bundled preloaded route cache from {PRELOADED_CACHE_PATH}")
+            with open(PRELOADED_CACHE_PATH, "r", encoding="utf-8") as _f:
+                data = _json.load(_f)
+        else:
+            data = parse_gpx_file(file_path)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -1457,14 +1469,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     try:
-        demo.launch(
-            server_name="0.0.0.0", 
-            server_port=port,
-            allowed_paths=[os.path.abspath(".")]
-        )
+        demo.launch(server_name="0.0.0.0", server_port=port)
     except OSError:
         print(f"[app] Port {port} is busy. Falling back to automatic port selection...")
-        demo.launch(
-            server_name="127.0.0.1",
-            allowed_paths=[os.path.abspath(".")]
-        )
+        demo.launch(server_name="127.0.0.1")

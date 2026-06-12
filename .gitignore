@@ -149,6 +149,8 @@ model/
 # Trailhead specific cache & temp files
 temp/
 *.cache.json
+# Exception: bundled preloaded-route cache must be committed so HF Space has POIs
+!src/data/trento_route_cache.json
 *.wav
 *.mp3
 
