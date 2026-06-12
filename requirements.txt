@@ -2,7 +2,7 @@ gradio>=5.0.0
 pandas
 numpy
 requests
-huggingface_hub<0.25.0
+huggingface_hub>=0.25.1,<1.0.0
 gpxpy
 folium
 plotly
