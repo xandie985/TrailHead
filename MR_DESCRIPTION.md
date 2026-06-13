@@ -1,39 +1,38 @@
-# Merge Request / Pull Request Description: Initial Codebase Setup
+# Merge Request / Pull Request Description: Phase 2 - Functional + POI Integration (dev_skeleton_and_features)
 
 ## 📝 Overview
-This Merge Request initializes the **Trailhead** Git repository. It configures the project settings, excludes local development artifacts, establishes container packaging setup, and adds user-facing documentation detailing the system architecture and features.
+This Merge Request delivers **Phase 2: Functional + POI Integration** for the **Trailhead** project. It introduces live and offline Points of Interest (POI) extraction via OpenStreetMap (Overpass API), integrates a local Wilderness First-Aid medical manual RAG search, and implements a full route simulation player with metrics HUD, proximity alert indicators, and smooth Leaflet map marker rendering.
 
 ## 🚀 Key Changes
-1. **Repository Setup**: Initialized local git configuration and renamed the default branch to `main`.
-2. **Environment Filtering (`.gitignore`)**: Added a standard `.gitignore` for Python environments to exclude:
-   - Python byte-code/compiled cache (`__pycache__/`, `*.pyc`)
-   - Virtual environments (`.venv/`, `venv/`, `env/`)
-   - Large model binary weights (`*.gguf`, `model/`)
-   - Operating system artifacts (`Thumbs.db`, `.DS_Store`)
-   - Local execution directories (`temp/`, `*.cache.json`)
-3. **Documentation (`README.md`)**:
-   - Outlined core features: GPX parsing, offline metrics (smoothed elevation gain, Naismith's time estimation), Wilderness Guide LLM (`google_gemma-4-E2B-it-GGUF` via `llama.cpp`), and voice-journaling.
-   - Built a Mermaid architecture flow diagram.
-   - Added setup and Docker deployment guides.
-4. **Containerization (`Dockerfile`)**: Configured the build setup, including pre-compiled CPU wheels for `llama-cpp-python` and pre-download steps for Gemma 4.
+1. **POI Integration (`gpx_parser.py`)**:
+   * Fetches key POIs (drinking water, spring, huts, shelters, campsites, viewpoint, peak, emergency phone) dynamically within a custom bounding box of the track via the **OSM Overpass API**.
+   * Filters amenities locally using the **Haversine formula** within a 150m buffer of the route.
+   * Serializes/saves POIs into GPX XML `<extensions>` and `<wpt>` tags via `save_enhanced_gpx` for offline capabilities.
+2. **Wilderness First-Aid Guide (`first_aid_guide.json` & `rag.py`)**:
+   * Created a wilderness medical corpus covering 5 key sections (bleeding, hypothermia, heat, altitude sickness, musculoskeletal).
+   * Implemented keyword intersection matching in `rag.py` to ground first-aid queries, returning relevant guide text along with section citations.
+3. **Simulation HUD & Playback UI (`app.py`)**:
+   * Added simulation controls (Play, Pause, Speed slider, Reset).
+   * Displays dashboard metrics (Route progress %, distance walked, altitude, and dynamic ETA to next checkpoint).
+   * Sounds/shows offline proximity alerts when within 150m of any drinking water, camp, or hut.
+   * Integrated Wilderness First-Aid tab with static emergency cards and RAG manual search.
+4. **Flicker-Free Map Rendering (Leaflet)**:
+   * Embedded Leaflet map container directly in the parent window.
+   * Wired data exchange using JSON state strings via a hidden Gradio textbox, completely eliminating iframe reload flickering during simulation updates.
+   * Rendered POIs with distinct colored circle markers (Blue for water, Green for huts, Orange for camps, Purple for peaks, Red for phone) for offline compatibility.
 
 ## 🛠️ Verification Done
-- Verified that untracked directories like `.venv/` and `temp/` are successfully ignored.
-- Ran `git status` to ensure clean staging.
-- Created local initial commit on branch `main`.
+* Created [test_overpass.py](file:///c:/Users/skushwaha/Documents/hckthn/TrailHead/test_overpass.py) to parse the preloaded Trento Track.
+* Verified Overpass API (`https://overpass-api.de/api/interpreter`) fetched, filtered, and returned amenities successfully within a 150m buffer.
+* Validated that the first-aid RAG keyword search retrieves correct sections and references them.
+* Tested the simulation playback, ensuring coordinates update smoothly and map centers without flickering.
 
 ---
 
 ## 📋 Steps to Push to GitHub
-If you haven't created the repository on GitHub yet:
-1. Go to [GitHub - Create a New Repository](https://github.com/new).
-2. Set the repository name to `TrailHead`. Do **not** initialize it with a README, gitignore, or license (since we have already created them).
-3. Copy the remote URL (e.g., `https://github.com/your-username/TrailHead.git`).
-4. Run the following commands in your terminal:
-   ```bash
-   # Add the remote repository
-   git remote add origin <your-github-repo-url>
+```bash
+# Push the current branch to GitHub
+git push -u origin dev_skeleton_and_features
+```
 
-   # Push the main branch to GitHub
-   git push -u origin main
-   ```
+

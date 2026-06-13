@@ -1,7 +1,18 @@
+---
+title: Trailhead
+emoji: 🌲
+colorFrom: green
+colorTo: blue
+sdk: gradio
+sdk_version: 5.15.0
+python_version: 3.11
+app_file: app.py
+pinned: false
+---
+
 # 🌲 Trailhead — Tactical Trail Computer & Route Planner
 
 [![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces)
-[![Docker](https://img.shields.io/badge/Docker-Enabled-blue.svg)](./Dockerfile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **"Plan online at basecamp, trek offline on the trail."**
@@ -33,20 +44,25 @@ graph TD
 
 ## ✨ Key Features
 
-### 1. Ingest & Planning (Basecamp Mode)
-* **GPX Upload:** Directly upload any standard GPX route containing track points or waypoints.
+### 1. Ingest, Planning & POI Fetching (Basecamp Mode)
+* **GPX Ingestion:** Directly parse track files, extract metadata, and calculate cumulative distances/elevations.
+* **OSM Overpass API Integration:** Pulls nearby Points of Interest (POIs) such as drinking water, alpine huts, campsites, viewpoints, and emergency phones directly from OpenStreetMap.
+* **Custom Buffer Filter:** Filters POIs locally using the haversine formula to only retain those within a 150m buffer of the trail.
+* **Enhanced GPX Export:** Saves fetched POIs into standard GPX `<extensions>` and `<wpt>` tags to be stored on disk and read offline.
 * **OpenRouteService (ORS) Routing:** Generate custom route segments between coordinates using the OSM-based ORS API (requires API key, planning phase only).
 
-### 2. Tactical HUD & Route Metrics
-* **Elevation Profile Smoothing:** Applies a moving-average window and noise threshold to eliminate GPX vertical jitter and provide realistic elevation gain/loss sums.
-* **Naismith's Rule Estimator:** Calculates estimated trekking time assuming a 5 km/h base speed plus 1 hour per 600m of ascent, helping you plan realistic daily splits.
-* **Interactive Map:** Built using `folium`, mapping out the route, checkpoints, and waypoints securely inside a sandboxed iframe.
+### 2. Tactical HUD & Trek Simulation
+* **Flicker-Free Client-Side Map:** Renders a native Leaflet canvas directly within the Gradio container. State synchronization from textboxes coordinates updates smoothly in real time without iframe refreshes.
+* **Color-Coded Vector Markers:** Custom circle-markers are drawn for POIs (Blue = water, Green = huts, Orange = campsite, Purple = viewpoints, Red = emergency phone) to avoid external asset requests.
+* **Playback Simulation Player:** Play, pause, speed slider, and reset state controller updates the hiker's current position along the trail.
+* **Live HUD Dashboard:** Telemetry tracking route completion percentage, cumulative distance hiked, current altitude, and next-checkpoint ETA.
+* **Offline Proximity Alerts:** Audio-visual indicators triggered automatically when the hiker is within 150m of any filtered POI.
 
-### 3. Contextual Wilderness Guide AI
-* **In-Process LLM:** Powered by `google_gemma-4-E2B-it-GGUF` running locally on your device or server CPU via `llama-cpp-python`.
-* **Proximity Checkpoint Narration:** Provides real-time terrain updates, safety advice, and target destination briefings as you approach waypoints.
-* **First-Aid RAG Field Guide:** Retreives localized wilderness first-aid procedures and references corresponding guide sections under extreme constraints.
-* **Rule-Based Risk Advisory:** Analyzes remaining daylight, current altitude (AMS detection), and weather to prompt warnings (e.g. recommending alternative campsites if pace degrades).
+### 3. Contextual Wilderness Guide AI & First-Aid RAG
+* **Wilderness First-Aid Manual:** Formulated manual (`first_aid_guide.json`) containing 5 key backcountry sections (bleeding, hypothermia, heat stroke, altitude illness, musculoskeletal injuries).
+* **Keyword RAG Search:** Local keyword intersection retriever indexes the guide and returns relevant instructions citing specific manual sections.
+* **In-Process LLM:** Powered by local GGUF models running via `llama-cpp-python`.
+* **Proximity Checkpoint Narration:** Provides terrain updates, safety advice, and target destination briefings as you approach checkpoints.
 
 ### 4. Offline Voice Journal & Post-Trek Reports
 * **ASR Voice Logs:** Dictate logs hands-free in the cold using `pywhispercpp` (whisper.cpp tiny). Logs transcribing audio, time, and coordinates are saved directly to SQLite.
@@ -91,22 +107,44 @@ Make sure you have Python 3.11+ installed.
 
 ---
 
-## 🐳 Docker Setup & Hugging Face Spaces
+## 📱 Android Installation (Termux)
 
-This project is fully ready to be deployed as a Docker container or hosted directly as a Hugging Face Space.
+You can run Trailhead entirely offline on an Android device using Termux. This provides a portable trail computer right in your pocket.
 
-### Run locally with Docker
-Build and run the Docker container:
-```bash
-docker build -t trailhead-computer .
-docker run -p 7860:7860 trailhead-computer
-```
+1. **Install Termux** from F-Droid (do not use the Google Play Store version as it's deprecated).
+2. **Open Termux and install dependencies:**
+   ```bash
+   pkg update && pkg upgrade -y
+   pkg install python git clang libcrypt libffi -y
+   ```
+3. **Clone and setup the project:**
+   ```bash
+   git clone https://github.com/xandie985/TrailHead.git
+   cd TrailHead
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+4. **Install Python requirements:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+   *(Note: For local LLM processing on Android, compiling `llama-cpp-python` might require additional CMake and build-essential packages. If you just need the map and GPS features, the base requirements are sufficient).*
+5. **Run the App:**
+   ```bash
+   python app.py
+   ```
+6. Open your mobile browser and navigate to `http://127.0.0.1:7860`.
+
+---
+
+## 🤗 Hugging Face Spaces Setup
+
+This project is fully compatible with Hugging Face Spaces using the Gradio SDK.
 
 ### Deploy to Hugging Face Spaces
-1. Create a new Space on [Hugging Face](https://huggingface.co/new-space) using the **Docker** SDK.
-2. Select the **Blank** template or copy the `Dockerfile` directly.
-3. Push the codebase to your Hugging Face Space repository.
-4. The container automatically downloads the `google_gemma-4-E2B-it-Q4_K_M.gguf` model during build time, ensuring the Space starts up instantly without any downloading delays on first launch.
+1. Create a new Space on [Hugging Face](https://huggingface.co/new-space) using the **Gradio** SDK.
+2. Push the codebase directly to your Hugging Face Space repository.
+3. The GGUF LLM and Whisper ASR models will download automatically upon first request at runtime and cache locally for offline use.
 
 ---
 

@@ -82,7 +82,195 @@ def calculate_elevation_gain_loss(elevations, threshold=2.0):
             last_val = val
     return gain, loss
 
-def parse_gpx_file(file_path, cache_dir="./temp"):
+def fetch_overpass_pois(min_lat, min_lon, max_lat, max_lon):
+    """
+    Fetch POIs (water, spring, huts, camps, shelter, viewpoint, peak, phone) from Overpass API in the bounding box.
+    """
+    url = "https://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node["amenity"="drinking_water"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["natural"="spring"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["amenity"="water_point"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["amenity"="fountain"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["tourism"="alpine_hut"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["tourism"="wilderness_hut"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["tourism"="camp_site"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["amenity"="shelter"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["tourism"="viewpoint"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["natural"="peak"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+      node["amenity"="phone"]({min_lat:.5f},{min_lon:.5f},{max_lat:.5f},{max_lon:.5f});
+    );
+    out body;
+    """
+    headers = {
+        'User-Agent': 'TrailheadTrekPlanner/1.0 (skushwaha@hckthn.com)'
+    }
+    try:
+        print(f"[gpx_parser] Querying Overpass API for POIs in bbox: [{min_lat:.5f}, {min_lon:.5f}, {max_lat:.5f}, {max_lon:.5f}]...")
+        response = requests.get(url, params={'data': query}, headers=headers, timeout=25)
+        if response.status_code == 200:
+            data = response.json()
+            elements = data.get("elements", [])
+            pois = []
+            for el in elements:
+                lat = el.get("lat")
+                lon = el.get("lon")
+                tags = el.get("tags", {})
+                
+                # Determine type
+                poi_type = "unknown"
+                if "amenity" in tags:
+                    poi_type = tags["amenity"]
+                elif "natural" in tags:
+                    poi_type = tags["natural"]
+                elif "tourism" in tags:
+                    poi_type = tags["tourism"]
+                    
+                name = tags.get("name", tags.get("water", poi_type.replace("_", " ").title()))
+                pois.append({
+                    "id": el.get("id"),
+                    "lat": lat,
+                    "lon": lon,
+                    "type": poi_type,
+                    "name": name
+                })
+            print(f"[gpx_parser] Overpass returned {len(pois)} raw POIs.")
+            return pois
+        else:
+            print(f"[gpx_parser] Overpass API returned status code {response.status_code}: {response.text}")
+            return []
+    except Exception as e:
+        print(f"[gpx_parser] Overpass query failed: {e}")
+        return []
+
+def filter_pois_near_track(points, pois, buffer_meters=150.0):
+    """
+    Filter POIs that are within buffer_meters of the track.
+    Returns list of POIs with distance and closest track point index.
+    """
+    enhanced_pois = []
+    if not points or not pois:
+        return enhanced_pois
+        
+    for poi in pois:
+        min_dist = float('inf')
+        closest_idx = -1
+        
+        for idx, pt in enumerate(points):
+            d = haversine(poi["lat"], poi["lon"], pt["lat"], pt["lon"])
+            if d < min_dist:
+                min_dist = d
+                closest_idx = idx
+                
+        if min_dist <= buffer_meters:
+            enhanced_pois.append({
+                "id": poi.get("id", 0),
+                "lat": poi["lat"],
+                "lon": poi["lon"],
+                "type": poi["type"],
+                "name": poi["name"],
+                "distance": round(min_dist, 1),
+                "track_index": closest_idx
+            })
+            
+    print(f"[gpx_parser] Filtered {len(enhanced_pois)} POIs within {buffer_meters}m buffer.")
+    return enhanced_pois
+
+def extract_pois_from_gpx(gpx):
+    """
+    Extract POIs from GPX waypoints and track point extensions.
+    Returns a list of POI dictionaries.
+    """
+    pois = []
+    # 1. Parse from waypoints
+    for wpt in gpx.waypoints:
+        desc = wpt.description or ""
+        poi_type = "unknown"
+        if "Type: " in desc:
+            parts = desc.split(",")
+            poi_type = parts[0].replace("Type: ", "").strip()
+        elif wpt.name:
+            # guess type from name/attributes
+            name_l = wpt.name.lower()
+            if "water" in name_l or "spring" in name_l or "fountain" in name_l:
+                poi_type = "drinking_water"
+            elif "camp" in name_l:
+                poi_type = "camp_site"
+            elif "hut" in name_l or "refuge" in name_l:
+                poi_type = "alpine_hut"
+            elif "shelter" in name_l:
+                poi_type = "shelter"
+                
+        pois.append({
+            "lat": wpt.latitude,
+            "lon": wpt.longitude,
+            "name": wpt.name or "Waypoint",
+            "type": poi_type,
+            "distance": 0.0
+        })
+        
+    # 2. Parse from track point extensions
+    idx = 0
+    for track in gpx.tracks:
+        for segment in track.segments:
+            for pt in segment.points:
+                if pt.extensions:
+                    for ext in pt.extensions:
+                        tag_name = ext.tag if hasattr(ext, 'tag') else ''
+                        if 'poi' in tag_name:
+                            poi_type = ext.attrib.get('type', 'unknown')
+                            poi_name = ext.attrib.get('name', 'Waypoint')
+                            try:
+                                dist = float(ext.attrib.get('distance', 0.0))
+                            except ValueError:
+                                dist = 0.0
+                            pois.append({
+                                "lat": pt.latitude,
+                                "lon": pt.longitude,
+                                "name": poi_name,
+                                "type": poi_type,
+                                "distance": dist,
+                                "track_index": idx
+                            })
+                idx += 1
+    return pois
+
+def save_enhanced_gpx(original_gpx_path, output_gpx_path, pois):
+    """
+    Save enhanced GPX file with POIs loaded as waypoints and extensions.
+    """
+    with open(original_gpx_path, "r", encoding="utf-8") as f:
+        gpx = gpxpy.parse(f)
+        
+    # Overwrite waypoints
+    gpx.waypoints = []
+    for poi in pois:
+        wpt = gpxpy.gpx.GPXWaypoint(latitude=poi['lat'], longitude=poi['lon'], name=poi['name'])
+        wpt.description = f"Type: {poi['type']}, Distance from track: {poi['distance']:.1f}m"
+        gpx.waypoints.append(wpt)
+        
+    # Add extensions to trackpoints
+    points = []
+    for track in gpx.tracks:
+        for segment in track.segments:
+            points.extend(segment.points)
+            
+    import xml.etree.ElementTree as ET
+    for poi in pois:
+        idx = poi.get('track_index')
+        if idx is not None and 0 <= idx < len(points):
+            pt = points[idx]
+            # Create sub-element under extensions
+            poi_el = ET.Element('poi', type=poi['type'], name=poi['name'], distance=f"{poi['distance']:.1f}")
+            pt.extensions.append(poi_el)
+            
+    with open(output_gpx_path, "w", encoding="utf-8") as f:
+        f.write(gpx.to_xml())
+    print(f"[gpx_parser] Saved enhanced GPX with {len(pois)} POIs to {output_gpx_path}")
+
+def parse_gpx_file(file_path, cache_dir="./temp", buffer_meters=150.0):
     """
     Parse a GPX file, fetch missing elevations, smooth the profile,
     and compute trek statistics. Caches results locally to allow offline usage.
@@ -192,9 +380,7 @@ def parse_gpx_file(file_path, cache_dir="./temp"):
     max_ele = max(smoothed_eles) if smoothed_eles else 0.0
     
     # Naismith's Rule: 5 km/h base speed + 1 hour per 600m ascent
-    # estimated_hours = (dist_km / 5.0) + (gain_m / 600.0)
     naismith_hours = (total_distance_km / 5.0) + (gain / 600.0)
-    # Estimate days assuming 8 hours hiking per day
     estimated_days = max(1.0, naismith_hours / 8.0)
     
     # Pre-parse waypoints if they exist in GPX
@@ -211,9 +397,7 @@ def parse_gpx_file(file_path, cache_dir="./temp"):
     # Generate checkpoints
     checkpoints = []
     if waypoints:
-        # Match waypoints to track points to find cumulative distance
         for wpt in waypoints:
-            # Find closest track point
             min_d = float('inf')
             closest_pt = points_data[0]
             for pt in points_data:
@@ -228,11 +412,22 @@ def parse_gpx_file(file_path, cache_dir="./temp"):
                 "ele": closest_pt["ele"],
                 "cum_dist": closest_pt["cum_dist"] / 1000.0
             })
-        # Sort by distance
         checkpoints.sort(key=lambda c: c["cum_dist"])
     else:
-        # Auto-generate checkpoints every 1000 meters
         checkpoints = generate_checkpoints(points_data, interval_meters=1000.0)
+        
+    # Parse existing POIs from GPX
+    pois = extract_pois_from_gpx(gpx)
+    
+    # If no POIs exist (like raw user upload), fetch from Overpass API (planning mode online)
+    if not pois:
+        lats = [pt["lat"] for pt in points_data]
+        lons = [pt["lon"] for pt in points_data]
+        min_lat, max_lat = min(lats) - 0.002, max(lats) + 0.002
+        min_lon, max_lon = min(lons) - 0.002, max(lons) + 0.002
+        
+        raw_pois = fetch_overpass_pois(min_lat, min_lon, max_lat, max_lon)
+        pois = filter_pois_near_track(points_data, raw_pois, buffer_meters)
         
     result = {
         "file_name": file_name,
@@ -244,7 +439,8 @@ def parse_gpx_file(file_path, cache_dir="./temp"):
         "estimated_days": round(estimated_days, 1),
         "naismith_hours": round(naismith_hours, 1),
         "points": points_data,
-        "checkpoints": checkpoints
+        "checkpoints": checkpoints,
+        "pois": pois
     }
     
     # Save cache
@@ -254,6 +450,12 @@ def parse_gpx_file(file_path, cache_dir="./temp"):
             print(f"[gpx_parser] Saved parsed GPX data cache to {cache_path}")
     except Exception as e:
         print(f"[gpx_parser] Cache write error: {e}")
+        
+    # Start offline map tiles pre-fetching in background
+    try:
+        start_tile_download(result)
+    except Exception as e:
+        print(f"[gpx_parser] Error starting background tile download: {e}")
         
     return result
 
@@ -312,3 +514,109 @@ def generate_checkpoints(points_data, interval_meters=1000.0):
         })
         
     return checkpoints
+
+def deg2num(lat_deg, lon_deg, zoom):
+    """Convert latitude and longitude to OSM tile X and Y coordinates at a given zoom level."""
+    lat_rad = math.radians(lat_deg)
+    n = 2.0 ** zoom
+    xtile = int((lon_deg + 180.0) / 360.0 * n)
+    ytile = int((1.0 - math.log(math.tan(lat_rad) + (1.0 / math.cos(lat_rad))) / math.pi) / 2.0 * n)
+    return (xtile, ytile)
+
+def download_tiles_for_bbox(min_lat, min_lon, max_lat, max_lon, output_dir="./assets/tiles", max_tiles=120):
+    """
+    Download OSM map tiles for a given bounding box at zoom levels 13 to 16.
+    Restricts zoom levels if the bounding box covers too many tiles.
+    """
+    import os
+    import requests
+    import time
+    
+    os.makedirs(output_dir, exist_ok=True)
+    zooms = [13, 14, 15, 16]
+    
+    # Calculate total tiles across zoom levels
+    tile_requests = []
+    for zoom in zooms:
+        x1, y1 = deg2num(max_lat, min_lon, zoom)
+        x2, y2 = deg2num(min_lat, max_lon, zoom)
+        
+        x_start, x_end = min(x1, x2), max(x1, x2)
+        y_start, y_end = min(y1, y2), max(y1, y2)
+        
+        for x in range(x_start, x_end + 1):
+            for y in range(y_start, y_end + 1):
+                tile_requests.append((zoom, x, y))
+                
+    total_tiles = len(tile_requests)
+    print(f"[tiles] Bounding box requires {total_tiles} tiles across zoom levels 13-16.")
+    
+    if total_tiles > max_tiles:
+        print(f"[tiles] Bounding box too large ({total_tiles} > {max_tiles}). Restricting to zoom 13-15.")
+        zooms = [13, 14, 15]
+        tile_requests = []
+        for zoom in zooms:
+            x1, y1 = deg2num(max_lat, min_lon, zoom)
+            x2, y2 = deg2num(min_lat, max_lon, zoom)
+            x_start, x_end = min(x1, x2), max(x1, x2)
+            y_start, y_end = min(y1, y2), max(y1, y2)
+            for x in range(x_start, x_end + 1):
+                for y in range(y_start, y_end + 1):
+                    tile_requests.append((zoom, x, y))
+        total_tiles = len(tile_requests)
+        print(f"[tiles] Bounding box now requires {total_tiles} tiles.")
+        
+    headers = {
+        'User-Agent': 'TrailheadTrekPlanner/1.0 (skushwaha@hckthn.com)'
+    }
+    
+    downloaded = 0
+    skipped = 0
+    for zoom, x, y in tile_requests:
+        tile_dir = os.path.join(output_dir, str(zoom), str(x))
+        os.makedirs(tile_dir, exist_ok=True)
+        tile_path = os.path.join(tile_dir, f"{y}.png")
+        
+        if os.path.exists(tile_path):
+            skipped += 1
+            continue
+            
+        url = f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+        try:
+            response = requests.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                with open(tile_path, "wb") as f:
+                    f.write(response.content)
+                downloaded += 1
+                # Small sleep to respect OSM servers usage policy
+                time.sleep(0.05)
+            else:
+                print(f"[tiles] Failed to download tile {zoom}/{x}/{y}: HTTP {response.status_code}")
+        except Exception as e:
+            print(f"[tiles] Exception downloading tile {zoom}/{x}/{y}: {e}")
+            
+    print(f"[tiles] Finished tile sync: downloaded {downloaded}, cached {skipped} (Total: {total_tiles})")
+    return downloaded, skipped, total_tiles
+
+def start_tile_download(data):
+    """Trigger the offline tile downloading in a background thread."""
+    import threading
+    points = data.get("points", [])
+    if not points:
+        return
+    lats = [pt["lat"] for pt in points]
+    lons = [pt["lon"] for pt in points]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+    
+    # Buffer coordinates slightly to ensure surrounding area is fully covered
+    min_lat -= 0.005
+    max_lat += 0.005
+    min_lon -= 0.005
+    max_lon += 0.005
+    
+    t = threading.Thread(target=download_tiles_for_bbox, args=(min_lat, min_lon, max_lat, max_lon))
+    t.daemon = True
+    t.start()
+    print("[tiles] Started background thread to sync offline tiles.")
+
