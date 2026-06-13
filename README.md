@@ -64,7 +64,7 @@ graph TD
 * **In-Process LLM:** Powered by local GGUF models running via `llama-cpp-python`.
 * **Proximity Checkpoint Narration:** Provides terrain updates, safety advice, and target destination briefings as you approach checkpoints.
 
-### 4. Offline Voice Journal & Post-Trek Reports (Roadmap)
+### 4. Offline Voice Journal & Post-Trek Reports
 * **ASR Voice Logs:** Dictate logs hands-free in the cold using `pywhispercpp` (whisper.cpp tiny). Logs transcribing audio, time, and coordinates are saved directly to SQLite.
 * **Post-Trek Storyteller:** Converts your journal entries and raw GPS points into an AI-narrated story artifact.
 
@@ -104,6 +104,36 @@ Make sure you have Python 3.11+ installed.
    python app.py
    ```
    Open `http://localhost:7860` in your web browser.
+
+---
+
+## 📱 Android Installation (Termux)
+
+You can run Trailhead entirely offline on an Android device using Termux. This provides a portable trail computer right in your pocket.
+
+1. **Install Termux** from F-Droid (do not use the Google Play Store version as it's deprecated).
+2. **Open Termux and install dependencies:**
+   ```bash
+   pkg update && pkg upgrade -y
+   pkg install python git clang libcrypt libffi -y
+   ```
+3. **Clone and setup the project:**
+   ```bash
+   git clone https://github.com/xandie985/TrailHead.git
+   cd TrailHead
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+4. **Install Python requirements:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+   *(Note: For local LLM processing on Android, compiling `llama-cpp-python` might require additional CMake and build-essential packages. If you just need the map and GPS features, the base requirements are sufficient).*
+5. **Run the App:**
+   ```bash
+   python app.py
+   ```
+6. Open your mobile browser and navigate to `http://127.0.0.1:7860`.
 
 ---
 
