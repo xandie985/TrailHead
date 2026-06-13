@@ -1149,7 +1149,7 @@ Please write a cohesive first-person adventure story of my trek."""
     return story, story_file
 
 # --- Gradio Blocks UI ---
-with gr.Blocks(title="Trailhead — Tactical Trail Computer") as demo:
+with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Computer") as demo:
     route_state = gr.State(None)
     null_state = gr.State(None)
     current_point_idx = gr.State(0)
@@ -1279,7 +1279,7 @@ with gr.Blocks(title="Trailhead — Tactical Trail Computer") as demo:
                 checkpoint_table = gr.DataFrame(
                     headers=["Checkpoint", "Coordinates", "Cumulative Distance", "Altitude"],
                     datatype=["str", "str", "str", "str"],
-                    column_count=(4, "fixed")
+                    col_count=(4, "fixed")
                 )
                 
         with gr.TabItem("🩺 Wilderness First-Aid"):
@@ -1468,14 +1468,9 @@ with gr.Blocks(title="Trailhead — Tactical Trail Computer") as demo:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    css_path = os.path.join(_APP_DIR, "assets", "custom.css")
     try:
-        demo.launch(server_name="0.0.0.0", server_port=port, css_paths=[css_path])
-    except (OSError, TypeError):
-        # Fallback: Gradio <6 uses css= on Blocks; just launch without it on port conflict
-        try:
-            demo.launch(server_name="0.0.0.0", server_port=port)
-        except OSError:
-            print(f"[app] Port {port} is busy. Falling back to automatic port selection...")
-            demo.launch(server_name="127.0.0.1")
+        demo.launch(server_name="0.0.0.0", server_port=port)
+    except OSError:
+        print(f"[app] Port {port} is busy. Falling back to automatic port selection...")
+        demo.launch(server_name="127.0.0.1")
 
