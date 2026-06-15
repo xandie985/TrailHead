@@ -78,10 +78,13 @@ To prevent the 2B model from hallucinating medical advice in life-or-death scena
 Trailhead parses GPX files, corrects noisy elevation data using a moving average and a 2.0-meter minimum threshold, and accurately predicts trek times using Naismith's Rule. 
 
 ### 2. 🗺️ Tactical HUD & Interactive Mapping
-The frontend is a completely custom, mobile-optimized Gradio interface featuring a native Leaflet canvas. It supports live GPS tracking, simulated trek playback, and renders POI markers without needing external map tile fetches on the trail.
+The frontend is a completely custom, mobile-optimized Gradio interface featuring a native Leaflet canvas. It supports live GPS tracking with high-frequency 1-second refresh intervals, simulated trek playback, active proximity alert updates, and highlights POI markers near the hiker's current position on the map without needing external map tile fetches on the trail.
 
-### 3. 🎙️ Geotagged Voice Journal & Storyteller
-Hikers can log voice entries while hiking. The application transcribes the audio, stamps it with the current GPS coordinates and altitude, and stores it in an SQLite database. Post-trek, the LLM compiles these logs, stats, and POI encounters into an engaging, shareable expedition report.
+### 3. 💬 Unified Wilderness AI Chatbot
+Combines the Wilderness Guide AI and the Wilderness First-Aid RAG manuals into a single chatbot interface tab. Features a side-by-side split screen with an Emergency Card and Quick Search Manual sidebar alongside the main chatbot window.
+
+### 4. 🎙️ Geotagged Voice Journal & Storyteller
+Hikers can log voice entries while hiking. The application transcribes the audio, stamps it with current GPS coordinates and altitude, and stores it in an SQLite database. Post-trek, the LLM compiles these logs, stats, and POI encounters into an engaging, non-technical, shareable social media expedition report.
 
 ---
 
