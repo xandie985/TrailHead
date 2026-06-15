@@ -161,3 +161,16 @@ p, span, label {
 #hiker-pos-coords, #live-gps-coords, #route-data-json {
     display: none !important;
 }
+
+/* Adjust the height and scroll styling of the saved journal logs table */
+#journal-logs-table {
+    height: 380px !important;
+    max-height: 380px !important;
+    overflow-y: auto !important;
+}
+
+#journal-logs-table .table-wrap {
+    height: 330px !important;
+    max-height: 330px !important;
+    overflow-y: auto !important;
+}

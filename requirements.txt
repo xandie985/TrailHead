@@ -15,4 +15,5 @@ Pillow
 # Local-only ASR dependencies (optional — only work when pywhispercpp native binaries are present)
 pywhispercpp       # Uncomment for local GPU-accelerated ASR
 miniaudio          # Uncomment for local audio resampling (required by pywhispercpp path)
-llama-cpp-python   # Uncomment to run local GGUF LLM instead of mock backend
+# Replace the generic llama-cpp-python with a specific version known to have wheels
+llama-cpp-python==0.2.79   # Uncomment to run local GGUF LLM instead of mock backend

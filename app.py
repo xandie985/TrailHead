@@ -1637,7 +1637,9 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                     journal_logs_table = gr.DataFrame(
                         headers=["Timestamp", "Coordinates", "Distance Hiked", "Transcript"],
                         datatype=["str", "str", "str", "str"],
-                        value=[]
+                        value=[],
+                        column_widths=["22%", "20%", "18%", "40%"],
+                        elem_id="journal-logs-table"
                     )
                     
             gr.Markdown("---")
