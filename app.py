@@ -228,6 +228,57 @@ MAP_INIT_JS = r"""
             if (window.pendingHikerCoords) {
                 window.updateHikerPosHandler(window.pendingHikerCoords);
             }
+            
+            // --- Live GPS Tracking Logic ---
+            window.gpsWatchId = null;
+            window.lastGpsTime = 0;
+            
+            window.toggleLiveGPS = function(enabled) {
+                if (!enabled && window.gpsWatchId !== null) {
+                    navigator.geolocation.clearWatch(window.gpsWatchId);
+                    window.gpsWatchId = null;
+                    console.log("Live GPS tracking stopped.");
+                    return;
+                }
+                
+                if (enabled && "geolocation" in navigator) {
+                    console.log("Requesting Live GPS tracking...");
+                    window.gpsWatchId = navigator.geolocation.watchPosition(
+                        function(position) {
+                            var now = Date.now();
+                            // Throttle updates to every 5 seconds (5000 ms)
+                            if (now - window.lastGpsTime < 5000) return;
+                            window.lastGpsTime = now;
+                            
+                            var coords = {
+                                lat: position.coords.latitude,
+                                lon: position.coords.longitude,
+                                ele: position.coords.altitude || 0.0,
+                                acc: position.coords.accuracy
+                            };
+                            
+                            // Send to hidden textbox for Gradio backend
+                            var textbox = document.querySelector("#live-gps-coords textarea");
+                            if (!textbox) textbox = document.querySelector("#live-gps-coords input");
+                            if (textbox) {
+                                textbox.value = JSON.stringify(coords);
+                                textbox.dispatchEvent(new Event("input", { bubbles: true }));
+                            }
+                        },
+                        function(error) {
+                            console.error("GPS Error:", error);
+                            alert("GPS Tracking Error: " + error.message);
+                        },
+                        {
+                            enableHighAccuracy: true,
+                            maximumAge: 10000,
+                            timeout: 10000
+                        }
+                    );
+                } else if (enabled) {
+                    alert("Geolocation is not supported by this browser or not running in a secure context.");
+                }
+            };
         }
     }, 100);
 }
@@ -894,6 +945,120 @@ def step_simulation(current_idx, route_data, speed):
     return next_idx, hud_html, alerts_html, narration_html, hiker_coords_json, plot_update, timer_update
 
 
+# --- Live GPS Processing ---
+def handle_live_gps_update(coords_str, route_data):
+    if not route_data or "points" not in route_data or not coords_str:
+        return gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+        
+    import json
+    try:
+        coords = json.loads(coords_str)
+        lat = coords["lat"]
+        lon = coords["lon"]
+        ele = coords["ele"]
+    except Exception:
+        return gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+        
+    points = route_data["points"]
+    checkpoints = route_data["checkpoints"]
+    pois = route_data.get("pois", [])
+    
+    # Snap to nearest point on route to determine cum_dist
+    min_d = float('inf')
+    closest_idx = 0
+    for idx, pt in enumerate(points):
+        d = haversine(lat, lon, pt["lat"], pt["lon"])
+        if d < min_d:
+            min_d = d
+            closest_idx = idx
+            
+    cum_dist = points[closest_idx]["cum_dist"]
+    total_dist = points[-1]["cum_dist"]
+    pct_complete = (cum_dist / total_dist) * 100.0 if total_dist > 0 else 0.0
+    
+    # Update hiker coords json for map JS
+    hiker_coords_json = json.dumps({
+        "lat": lat,
+        "lon": lon,
+        "ele": ele,
+        "cum_dist": cum_dist / 1000.0
+    })
+    
+    # Proximity alerts check
+    active_alerts = []
+    for poi in pois:
+        d = haversine(lat, lon, poi["lat"], poi["lon"])
+        if d <= 150.0:
+            icon_map = {
+                "drinking_water": "💧", "spring": "💧", "water_point": "💧",
+                "fountain": "⛲", "alpine_hut": "🏡", "wilderness_hut": "🏡",
+                "camp_site": "⛺", "shelter": "🛡️", "viewpoint": "👁️",
+                "peak": "🏔️", "phone": "📞"
+            }
+            icon = icon_map.get(poi["type"], "📍")
+            active_alerts.append(f"<div style='background:rgba(245,158,11,0.15); border:1px solid #f59e0b; padding:10px; border-radius:8px; margin-bottom:5px; color:#f59e0b;'>{icon} <b>PROXIMITY:</b> {poi['name']} is {d:.0f}m away! ({poi['type'].replace('_', ' ').title()})</div>")
+            
+    # Checkpoint ETA progress
+    next_cp = None
+    for cp in checkpoints:
+        if cp["cum_dist"] * 1000.0 > cum_dist:
+            next_cp = cp
+            break
+            
+    eta_text = "N/A"
+    if next_cp:
+        dist_to_cp = (next_cp["cum_dist"] * 1000.0) - cum_dist
+        eta_sec = dist_to_cp / 1.38
+        eta_text = f"{int(eta_sec // 60)}m {int(eta_sec % 60)}s"
+        
+    alerts_html = "".join(active_alerts) if active_alerts else "<div style='color:var(--text-muted);'>No active proximity alerts.</div>"
+    
+    hud_html = f'''
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 15px; margin-bottom: 20px;">
+        <div class="hud-stat-box">
+            <div class="hud-stat-val mono-display">{pct_complete:.1f}%</div>
+            <div class="hud-stat-lbl">Route Progress</div>
+        </div>
+        <div class="hud-stat-box">
+            <div class="hud-stat-val mono-display">{cum_dist/1000.0:.2f} km</div>
+            <div class="hud-stat-lbl">Distance Hiked</div>
+        </div>
+        <div class="hud-stat-box">
+            <div class="hud-stat-val mono-display">{ele:.1f} m</div>
+            <div class="hud-stat-lbl">Current Altitude</div>
+        </div>
+        <div class="hud-stat-box">
+            <div class="hud-stat-val mono-display">{eta_text}</div>
+            <div class="hud-stat-lbl">ETA to Next Point</div>
+        </div>
+    </div>
+    '''
+    
+    # Proximity narration brief
+    narration_html = ""
+    for cp in checkpoints:
+        cp_dist_m = cp["cum_dist"] * 1000.0
+        if abs(cum_dist - cp_dist_m) <= 150.0:
+            cautions = ""
+            if ele > 2400:
+                cautions = " WARNING: Altitude is above 2400m. Watch for AMS symptoms (headache, dizziness)."
+            narration_html = f'''
+            <div style="border-left: 4px solid var(--accent-primary); background: rgba(245,158,11,0.05); padding: 15px; border-radius: 0 8px 8px 0;">
+                <b style="color:var(--accent-primary);">📻 RADIO BRIEFING FOR {cp['name'].upper()}:</b>
+                <p style="margin-top: 5px; font-style: italic;">
+                    "Hiker, you have arrived at {cp['name']}. Current altitude is {ele:.1f}m.{cautions}"
+                </p>
+            </div>
+            '''
+            break
+            
+    plot_update = gr.update()
+    fig = generate_elevation_plot(points, closest_idx)
+    if fig:
+        plot_update = fig
+            
+    return hud_html, alerts_html, narration_html, hiker_coords_json, plot_update
+
 
 # --- First-Aid Manual Search ---
 def handle_first_aid_search(query):
@@ -1154,6 +1319,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
     null_state = gr.State(None)
     current_point_idx = gr.State(0)
     hiker_pos_coords = gr.Textbox(visible=False, elem_id="hiker-pos-coords")
+    live_gps_coords = gr.Textbox(visible=False, elem_id="live-gps-coords")
     route_data_json = gr.Textbox(visible=False, elem_id="route-data-json")
     
     hiker_pos_coords.change(
@@ -1241,6 +1407,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                         pause_btn = gr.Button("⏸ PAUSE", variant="secondary")
                         reset_btn = gr.Button("🔄 RESET", variant="secondary")
                     speed_slider = gr.Slider(minimum=1, maximum=20, step=1, value=1, label="Simulation Speed (Points per tick)")
+                    live_gps_toggle = gr.Checkbox(label="📡 Enable Live GPS Tracking (Updates every 5s)")
                     
                     gr.Markdown("### ⚠️ Active Proximity Alerts")
                     alerts_output = gr.HTML(value="<div style='color:var(--text-muted);'>No active proximity alerts.</div>")
@@ -1464,6 +1631,20 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
         fn=handle_first_aid_search,
         inputs=[rag_query],
         outputs=[rag_output]
+    )
+
+    # --- Live GPS Triggers ---
+    live_gps_toggle.change(
+        fn=None,
+        inputs=[live_gps_toggle],
+        outputs=None,
+        js="(enabled) => { if (window.toggleLiveGPS) window.toggleLiveGPS(enabled); }"
+    )
+    
+    live_gps_coords.change(
+        fn=handle_live_gps_update,
+        inputs=[live_gps_coords, route_state],
+        outputs=[stats_display, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
 
 if __name__ == "__main__":
