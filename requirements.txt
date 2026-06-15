@@ -1,12 +1,12 @@
-gradio==5.15.0
+gradio[oauth,mcp]==6.18.0
 pandas
 numpy
 requests
-huggingface_hub>=0.25.1,<1.0.0
+huggingface_hub>=1.2.0,<2.0
 gpxpy
 folium
 plotly
-pydantic>=2.0.0,<2.11.0
+pydantic>=2.11.10,<2.12.5
 Pillow
 # ASR: transformers + torch as fallback for Hugging Face (no pywhispercpp available there)
 # transformers
