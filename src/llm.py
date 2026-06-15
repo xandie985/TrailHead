@@ -18,8 +18,8 @@ BACKEND = "llama_cpp" # Force llama_cpp backend
 
 
 # Constants for Hugging Face Space model loading
-MODEL_REPO = "bartowski/google_gemma-4-E2B-it-GGUF"
-MODEL_FILE = "google_gemma-4-E2B-it-Q4_K_M.gguf"
+MODEL_REPO = "bartowski/gemma-1.1-2b-it-GGUF"
+MODEL_FILE = "gemma-1.1-2b-it-Q4_K_M.gguf"
 LOCAL_MODEL_DIR = os.environ.get("MODEL_DIR", "./model")
 
 _llama_model = None
