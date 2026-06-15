@@ -481,19 +481,31 @@ def generate_llama_cpp(prompt, system="", image_path=None, audio_path=None, hist
         if image_path:
             prompt = f"[📸 Image uploaded] {prompt}"
 
-        formatted_prompt = f"<|im_start|>system\n{system}<|im_end|>\n"
+        messages = []
+        combined_prompt = prompt
+        if system:
+            combined_prompt = f"System Instructions:\n{system}\n\nUser Query: {prompt}"
+            
         if history:
+            first_msg_updated = False
             for msg in history:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
-                formatted_prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
-        formatted_prompt += f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-        
-        print(f"\n--- [llama.cpp INPUT PROMPT] ---\n{formatted_prompt}\n--------------------------------")
+                if role == "system":
+                    continue
+                if not first_msg_updated and role == "user":
+                    content = f"System Instructions:\n{system}\n\nUser Query: {content}"
+                    first_msg_updated = True
+                messages.append({"role": role, "content": content})
+            messages.append({"role": "user", "content": prompt})
+        else:
+            messages.append({"role": "user", "content": combined_prompt})
+            
+        print(f"\n--- [llama.cpp INPUT MESSAGES] ---\n{messages}\n--------------------------------")
         print("--- [llama.cpp STREAMING RESPONSE] ---")
         try:
-            response = model(
-                formatted_prompt,
+            response = model.create_chat_completion(
+                messages=messages,
                 max_tokens=512,
                 temperature=0.3,
                 top_p=0.9,
@@ -521,16 +533,14 @@ def generate_llama_cpp(prompt, system="", image_path=None, audio_path=None, hist
                 yield voice_prefix
                 
             if first_chunk:
-                text = first_chunk['choices'][0]['text']
-                cleaned = text.replace("<|im_end|>", "")
-                print(cleaned, end="", flush=True)
-                yield cleaned
+                text = first_chunk['choices'][0]['delta'].get('content', '')
+                print(text, end="", flush=True)
+                yield text
 
             for chunk in response_iter:
-                text = chunk['choices'][0]['text']
-                cleaned = text.replace("<|im_end|>", "")
-                print(cleaned, end="", flush=True)
-                yield cleaned
+                text = chunk['choices'][0]['delta'].get('content', '')
+                print(text, end="", flush=True)
+                yield text
             print("\n--------------------------------------")
         except Exception as e:
             print(f"[llm.py] Error running llama.cpp: {e}. Falling back to mock.")

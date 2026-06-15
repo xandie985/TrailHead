@@ -1613,7 +1613,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                         ]
                     )
                 with gr.Column(scale=1):
-                    gr.HTML(EMERGENCY_CARD)
+                    gr.Markdown(EMERGENCY_CARD)
                     with gr.Accordion("🔍 First-Aid Manual Quick Search", open=False):
                         rag_query = gr.Textbox(placeholder="What symptoms or injury do you want to query?", label="Query Symptoms")
                         rag_search_btn = gr.Button("Search manual", variant="primary")
