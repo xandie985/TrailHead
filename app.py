@@ -103,6 +103,7 @@ MAP_INIT_JS = r"""
                         window.hikerMarker.remove();
                         window.hikerMarker = null;
                     }
+                    window.routePolyline = null;
                     
                     var points = data.points || [];
                     var checkpoints = data.checkpoints || [];
@@ -116,6 +117,7 @@ MAP_INIT_JS = r"""
                         weight: 5,
                         opacity: 0.85
                     }).addTo(window.mapLayers);
+                    window.routePolyline = polyline;
                     
                     map.fitBounds(polyline.getBounds());
                     
@@ -210,12 +212,19 @@ MAP_INIT_JS = r"""
                     
                     var popupText = `
                     <div style="font-family: 'Outfit', sans-serif; font-size: 11px; color: #111;">
-                        <b>Current simulated position</b><br>
+                        <b>Current position</b><br>
                         Distance Walked: ${data.cum_dist.toFixed(2)} km<br>
                         Altitude: ${data.ele.toFixed(1)} m
                     </div>`;
                     window.hikerMarker.bindPopup(popupText);
-                    map.panTo(pos);
+                    
+                    if (window.routePolyline) {
+                        var routeBounds = window.routePolyline.getBounds();
+                        var combinedBounds = routeBounds.extend(pos);
+                        map.fitBounds(combinedBounds, { padding: [50, 50] });
+                    } else {
+                        map.panTo(pos);
+                    }
                 } catch(e) {
                     console.error("Error updating hiker position:", e);
                 }
@@ -231,52 +240,189 @@ MAP_INIT_JS = r"""
             
             // --- Live GPS Tracking Logic ---
             window.gpsWatchId = null;
-            window.lastGpsTime = 0;
+            window.lastGpsTime = -99999; // Allow immediate first fix
+            window.liveGpsMarker = null;   // Blue pulsing dot (user location)
+            window.liveAccCircle = null;   // Accuracy radius circle
+            window.liveGpsActive = false;
+            
+            // Inject pulsing CSS for the live GPS dot
+            if (!document.getElementById('gps-pulse-style')) {
+                var style = document.createElement('style');
+                style.id = 'gps-pulse-style';
+                style.textContent = `
+                  @keyframes gpsPulse {
+                    0%   { transform: scale(1);   opacity: 1; }
+                    70%  { transform: scale(2.5); opacity: 0; }
+                    100% { transform: scale(1);   opacity: 0; }
+                  }
+                  .gps-dot-icon {
+                    position: relative;
+                    width: 18px; height: 18px;
+                  }
+                  .gps-dot-icon .pulse {
+                    position: absolute;
+                    top: 0; left: 0;
+                    width: 18px; height: 18px;
+                    border-radius: 50%;
+                    background: rgba(66,133,244,0.4);
+                    animation: gpsPulse 1.6s ease-out infinite;
+                  }
+                  .gps-dot-icon .core {
+                    position: absolute;
+                    top: 3px; left: 3px;
+                    width: 12px; height: 12px;
+                    border-radius: 50%;
+                    background: #4285f4;
+                    border: 2px solid #fff;
+                    box-shadow: 0 0 6px rgba(66,133,244,0.8);
+                  }
+                `;
+                document.head.appendChild(style);
+            }
+            
+            window.updateLiveGPSMarker = function(lat, lon, accuracy) {
+                var map = window.myLeafletMap;
+                if (!map) return;
+                var pos = [lat, lon];
+                
+                if (!window.liveGpsMarker) {
+                    // Create the pulsing blue icon
+                    var gpsDotIcon = L.divIcon({
+                        className: '',
+                        html: '<div class="gps-dot-icon"><div class="pulse"></div><div class="core"></div></div>',
+                        iconSize: [18, 18],
+                        iconAnchor: [9, 9]
+                    });
+                    window.liveGpsMarker = L.marker(pos, { icon: gpsDotIcon, zIndexOffset: 1000 })
+                        .bindPopup('<b>📡 Your Live Location</b>')
+                        .addTo(map);
+                } else {
+                    window.liveGpsMarker.setLatLng(pos);
+                }
+                
+                // Update/create accuracy circle
+                if (accuracy && accuracy > 0) {
+                    if (!window.liveAccCircle) {
+                        window.liveAccCircle = L.circle(pos, {
+                            radius: accuracy,
+                            color: '#4285f4',
+                            fillColor: '#4285f4',
+                            fillOpacity: 0.08,
+                            weight: 1.5,
+                            dashArray: '4,4'
+                        }).addTo(map);
+                    } else {
+                        window.liveAccCircle.setLatLng(pos);
+                        window.liveAccCircle.setRadius(accuracy);
+                    }
+                }
+                
+                // Google Maps style: keep user centered, show route context
+                if (window.routePolyline) {
+                    var routeBounds = window.routePolyline.getBounds();
+                    var combinedBounds = routeBounds.extend(pos);
+                    map.fitBounds(combinedBounds, { padding: [60, 60], maxZoom: 17 });
+                } else {
+                    map.setView(pos, Math.max(map.getZoom(), 15));
+                }
+            };
+            
+            window.stopLiveGPSMarker = function() {
+                if (window.liveGpsMarker) {
+                    window.liveGpsMarker.remove();
+                    window.liveGpsMarker = null;
+                }
+                if (window.liveAccCircle) {
+                    window.liveAccCircle.remove();
+                    window.liveAccCircle = null;
+                }
+            };
             
             window.toggleLiveGPS = function(enabled) {
-                if (!enabled && window.gpsWatchId !== null) {
-                    navigator.geolocation.clearWatch(window.gpsWatchId);
-                    window.gpsWatchId = null;
-                    console.log("Live GPS tracking stopped.");
+                window.liveGpsActive = !!enabled;
+                
+                if (!enabled) {
+                    if (window.gpsWatchId !== null) {
+                        navigator.geolocation.clearWatch(window.gpsWatchId);
+                        window.gpsWatchId = null;
+                        console.log("Live GPS tracking stopped.");
+                    }
+                    window.stopLiveGPSMarker();
                     return;
                 }
                 
                 if (enabled && "geolocation" in navigator) {
+                    if (window.gpsWatchId !== null) {
+                        console.log("Live GPS tracking already active.");
+                        return;
+                    }
+                    window.lastGpsTime = -99999; // ensure first fix goes through
                     console.log("Requesting Live GPS tracking...");
+                    
+                    // Immediate one-shot to show position fast
+                    navigator.geolocation.getCurrentPosition(
+                        function(position) {
+                            var lat = position.coords.latitude;
+                            var lon = position.coords.longitude;
+                            var ele = position.coords.altitude || 0.0;
+                            var acc = position.coords.accuracy;
+                            window.updateLiveGPSMarker(lat, lon, acc);
+                            var coords = { lat: lat, lon: lon, ele: ele, acc: acc };
+                            var textbox = document.querySelector("#live-gps-coords textarea");
+                            if (!textbox) textbox = document.querySelector("#live-gps-coords input");
+                            if (textbox) {
+                                var ts = '_t=' + Date.now(); // force unique value to trigger .change()
+                                textbox.value = JSON.stringify(Object.assign(coords, { _ts: Date.now() }));
+                                textbox.dispatchEvent(new Event("input", { bubbles: true }));
+                                textbox.dispatchEvent(new Event("change", { bubbles: true }));
+                            }
+                            window.lastGpsTime = Date.now();
+                        },
+                        function(e) { console.warn("Quick GPS fix failed:", e.message); },
+                        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+                    );
+                    
+                    // Continuous watch for ongoing updates
                     window.gpsWatchId = navigator.geolocation.watchPosition(
                         function(position) {
                             var now = Date.now();
-                            // Throttle updates to every 5 seconds (5000 ms)
                             if (now - window.lastGpsTime < 5000) return;
                             window.lastGpsTime = now;
                             
-                            var coords = {
-                                lat: position.coords.latitude,
-                                lon: position.coords.longitude,
-                                ele: position.coords.altitude || 0.0,
-                                acc: position.coords.accuracy
-                            };
+                            var lat = position.coords.latitude;
+                            var lon = position.coords.longitude;
+                            var ele = position.coords.altitude || 0.0;
+                            var acc = position.coords.accuracy;
                             
-                            // Send to hidden textbox for Gradio backend
+                            // 1. Update map marker directly in JS (instant, no Python round-trip)
+                            window.updateLiveGPSMarker(lat, lon, acc);
+                            
+                            // 2. Send to Python backend for HUD / alerts update
+                            var coords = { lat: lat, lon: lon, ele: ele, acc: acc, _ts: now };
                             var textbox = document.querySelector("#live-gps-coords textarea");
                             if (!textbox) textbox = document.querySelector("#live-gps-coords input");
                             if (textbox) {
                                 textbox.value = JSON.stringify(coords);
                                 textbox.dispatchEvent(new Event("input", { bubbles: true }));
+                                textbox.dispatchEvent(new Event("change", { bubbles: true }));
                             }
                         },
                         function(error) {
-                            console.error("GPS Error:", error);
-                            alert("GPS Tracking Error: " + error.message);
+                            console.error("GPS Watch Error:", error);
+                            if (error.code === 1) {
+                                alert("Location permission denied. Please allow location access in your browser settings.");
+                            } else {
+                                console.warn("GPS error (code " + error.code + "): " + error.message);
+                            }
                         },
                         {
                             enableHighAccuracy: true,
-                            maximumAge: 10000,
-                            timeout: 10000
+                            maximumAge: 5000,
+                            timeout: 15000
                         }
                     );
                 } else if (enabled) {
-                    alert("Geolocation is not supported by this browser or not running in a secure context.");
+                    alert("Geolocation is not supported by this browser or not running in a secure context (use localhost or HTTPS).");
                 }
             };
         }
@@ -1380,34 +1526,22 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                         file_types=[".gpx"],
                         label="Upload GPX Route File"
                     )
+                    # --- Live GPS Toggle (above controls) ---
+                    live_gps_toggle = gr.Checkbox(
+                        label="📡 Enable Live GPS Tracking",
+                        value=False,
+                        elem_id="live-gps-toggle-box"
+                    )
+                    gps_status_html = gr.HTML(
+                        value="<div style='font-size:0.78rem; color:var(--text-muted); margin-top:-6px; margin-bottom:4px;'>GPS off — toggle to track your real-world position on the map.</div>"
+                    )
                     
-                    with gr.Accordion("🔌 Fetch Online Route (Basecamp Mode)", open=False):
-                        start_pt = gr.Textbox(
-                            value="46.0734974, 11.1717214",
-                            label="Start Coordinates (Lat, Lon)"
-                        )
-                        end_pt = gr.Textbox(
-                            value="46.0788233, 11.1777218",
-                            label="End Coordinates (Lat, Lon)"
-                        )
-                        ors_profile = gr.Dropdown(
-                            choices=["foot-hiking", "foot-walking"],
-                            value="foot-hiking",
-                            label="Profile"
-                        )
-                        ors_api_key = gr.Textbox(
-                            type="password",
-                            label="OpenRouteService API Key (Optional)"
-                        )
-                        fetch_route_btn = gr.Button("Fetch & Load Route", variant="secondary")
-                        
                     gr.Markdown("### 🎮 Trek Simulation Controls")
                     with gr.Row():
-                        play_btn = gr.Button("▶ PLAY", variant="primary")
+                        start_btn = gr.Button("▶ START", variant="primary")
                         pause_btn = gr.Button("⏸ PAUSE", variant="secondary")
                         reset_btn = gr.Button("🔄 RESET", variant="secondary")
                     speed_slider = gr.Slider(minimum=1, maximum=20, step=1, value=1, label="Simulation Speed (Points per tick)")
-                    live_gps_toggle = gr.Checkbox(label="📡 Enable Live GPS Tracking (Updates every 5s)")
                     
                     gr.Markdown("### ⚠️ Active Proximity Alerts")
                     alerts_output = gr.HTML(value="<div style='color:var(--text-muted);'>No active proximity alerts.</div>")
@@ -1525,22 +1659,41 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
         outputs=[current_point_idx, stats_display, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot, timer]
     )
     
-    play_btn.click(
-        fn=lambda: gr.update(active=True),
-        inputs=[],
-        outputs=[timer]
+    def handle_start(live_gps_enabled):
+        if live_gps_enabled:
+            # GPS mode: don't start simulation timer; GPS JS handles map updates
+            return gr.update(active=False), gr.update(value="<div style='font-size:0.78rem; color:#4ade80; margin-top:-6px; margin-bottom:4px;'>🟢 GPS Active — tracking your location every 5s.</div>")
+        else:
+            return gr.update(active=True), gr.update(value="<div style='font-size:0.78rem; color:var(--text-muted); margin-top:-6px; margin-bottom:4px;'>▶ Simulation running...</div>")
+
+    start_btn.click(
+        fn=handle_start,
+        inputs=[live_gps_toggle],
+        outputs=[timer, gps_status_html],
+        js="""
+        (enabled) => {
+            if (enabled && window.toggleLiveGPS) {
+                window.toggleLiveGPS(true);
+            }
+            return enabled;
+        }
+        """
     )
     
+    def handle_pause(live_gps_enabled):
+        new_status = "<div style='font-size:0.78rem; color:var(--text-muted); margin-top:-6px; margin-bottom:4px;'>GPS off — toggle to track your real-world position on the map.</div>"
+        return gr.update(active=False), False, gr.update(value=new_status)
+        
     pause_btn.click(
-        fn=lambda: gr.update(active=False),
-        inputs=[],
-        outputs=[timer]
+        fn=handle_pause,
+        inputs=[live_gps_toggle],
+        outputs=[timer, live_gps_toggle, gps_status_html],
+        js="""(e) => { if (window.toggleLiveGPS) window.toggleLiveGPS(false); return e; }"""
     )
     
-
-
     def handle_reset(route):
         pts = route.get("points", []) if route else []
+        off_status = "<div style='font-size:0.78rem; color:var(--text-muted); margin-top:-6px; margin-bottom:4px;'>GPS off — toggle to track your real-world position on the map.</div>"
         if pts:
             stats_html, map_iframe, checkpoint_table_data = format_route_view(route)
             import json
@@ -1552,13 +1705,14 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 "cum_dist": start_pt["cum_dist"] / 1000.0
             })
             ele_plot = generate_elevation_plot(pts, 0)
-            return 0, gr.update(active=False), stats_html, "", "", hiker_coords_json, ele_plot
-        return 0, gr.update(active=False), gr.update(), "", "", "", None
+            return 0, gr.update(active=False), stats_html, "", "", hiker_coords_json, ele_plot, False, gr.update(value=off_status)
+        return 0, gr.update(active=False), gr.update(), "", "", "", None, False, gr.update(value=off_status)
         
     reset_btn.click(
         fn=handle_reset,
         inputs=[route_state],
-        outputs=[current_point_idx, timer, stats_display, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
+        outputs=[current_point_idx, timer, stats_display, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot, live_gps_toggle, gps_status_html],
+        js="""(r) => { if (window.toggleLiveGPS) window.toggleLiveGPS(false); return r; }"""
     )
 
 
@@ -1587,12 +1741,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
         outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
     )
     
-    # Fetch route button click
-    fetch_route_btn.click(
-        fn=handle_ors_fetch_click,
-        inputs=[start_pt, end_pt, ors_profile, ors_api_key],
-        outputs=[stats_display, route_data_json, checkpoint_table, route_state, current_point_idx, timer, alerts_output, narration_output, hiker_pos_coords, elevation_profile_plot]
-    )
+
 
     # --- Custom Waypoint Tagging Triggers ---
     tag_wp_btn.click(
@@ -1635,10 +1784,10 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
 
     # --- Live GPS Triggers ---
     live_gps_toggle.change(
-        fn=None,
+        fn=lambda enabled: gr.update(value="<div style='font-size:0.78rem; color:#4ade80; margin-top:-6px; margin-bottom:4px;'>🟢 GPS Active — tracking your location every 5s.</div>") if enabled else gr.update(value="<div style='font-size:0.78rem; color:var(--text-muted); margin-top:-6px; margin-bottom:4px;'>GPS off — toggle to track your real-world position on the map.</div>"),
         inputs=[live_gps_toggle],
-        outputs=None,
-        js="(enabled) => { if (window.toggleLiveGPS) window.toggleLiveGPS(enabled); }"
+        outputs=[gps_status_html],
+        js="(enabled) => { if (window.toggleLiveGPS) window.toggleLiveGPS(enabled); return enabled; }"
     )
     
     live_gps_coords.change(

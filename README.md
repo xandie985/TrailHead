@@ -49,12 +49,14 @@ graph TD
 * **OSM Overpass API Integration:** Pulls nearby Points of Interest (POIs) such as drinking water, alpine huts, campsites, viewpoints, and emergency phones directly from OpenStreetMap.
 * **Custom Buffer Filter:** Filters POIs locally using the haversine formula to only retain those within a 150m buffer of the trail.
 * **Enhanced GPX Export:** Saves fetched POIs into standard GPX `<extensions>` and `<wpt>` tags to be stored on disk and read offline.
-* **OpenRouteService (ORS) Routing:** Generate custom route segments between coordinates using the OSM-based ORS API (requires API key, planning phase only).
 
-### 2. Tactical HUD & Trek Simulation
-* **Flicker-Free Client-Side Map:** Renders a native Leaflet canvas directly within the Gradio container. State synchronization from textboxes coordinates updates smoothly in real time without iframe refreshes.
+### 2. Tactical HUD, Live GPS & Trek Simulation
+* **Live GPS Tracking:** Uses client-side browser Geolocation API (`getCurrentPosition` & `watchPosition`) to plot real-time coordinates. Renders a pulsing blue Google Maps-style location marker with a shaded accuracy circle.
+* **Smart Auto-Zoom:** Dynamically scales map zoom levels using Leaflet `fitBounds` to display both the predefined route path and the hiker's live position simultaneously.
+* **Unified Trek Controls:** The `▶ START` button serves a dual purpose: if GPS is enabled, it initiates live tracking and locks/centers position updates (throttled at 5 seconds to conserve battery); otherwise, it runs the time-lapse simulation. `⏸ PAUSE` freezes updates, and `🔄 RESET` clears status and restores initial layout.
+* **Flicker-Free Client-Side Map:** Renders a native Leaflet canvas directly within the Gradio container. State synchronization from textboxes updates coordinates smoothly in real time without iframe refreshes.
 * **Color-Coded Vector Markers:** Custom circle-markers are drawn for POIs (Blue = water, Green = huts, Orange = campsite, Purple = viewpoints, Red = emergency phone) to avoid external asset requests.
-* **Playback Simulation Player:** Play, pause, speed slider, and reset state controller updates the hiker's current position along the trail.
+* **Playback Simulation Player:** Play, pause, speed slider, and reset state controller updates the hiker's current position along the trail when GPS is disabled.
 * **Live HUD Dashboard:** Telemetry tracking route completion percentage, cumulative distance hiked, current altitude, and next-checkpoint ETA.
 * **Offline Proximity Alerts:** Audio-visual indicators triggered automatically when the hiker is within 150m of any filtered POI.
 
