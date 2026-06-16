@@ -1,14 +1,3 @@
----
-title: Trailhead
-emoji: 🌲
-colorFrom: green
-colorTo: blue
-sdk: gradio
-sdk_version: 6.18.0
-python_version: "3.10"
-app_file: app.py
-pinned: false
----
 
 # 🌲 Trailhead — Tactical Trail Computer & Route Planner
 
