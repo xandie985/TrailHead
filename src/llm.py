@@ -14,11 +14,12 @@ try:
     default_backend = "llama_cpp"
 except ImportError:
     default_backend = "mock"
-BACKEND = os.environ.get("BACKEND", default_backend).lower()
+BACKEND = "llama_cpp" # Force llama_cpp backend
+
 
 # Constants for Hugging Face Space model loading
-MODEL_REPO = "bartowski/google_gemma-4-E2B-it-GGUF"
-MODEL_FILE = "google_gemma-4-E2B-it-Q4_K_M.gguf"
+MODEL_REPO = "bartowski/gemma-1.1-2b-it-GGUF"
+MODEL_FILE = "gemma-1.1-2b-it-Q4_K_M.gguf"
 LOCAL_MODEL_DIR = os.environ.get("MODEL_DIR", "./model")
 
 _llama_model = None
@@ -334,39 +335,48 @@ def generate_mock(prompt, system="", image_path=None, audio_path=None, history=N
             else:
                 response += "- No voice logs recorded.\n"
         else:
+            water_count = sum(1 for am in amenities if "water" in am["name"].lower() or "fountain" in am["name"].lower())
+            camp_count = sum(1 for am in amenities if "camp" in am["name"].lower() or "shelter" in am["name"].lower())
+            other_count = len(amenities) - water_count - camp_count
+            
             response += "🌲 **MY WILDERNESS EXPEDITION REPORT** 🌲\n"
             response += "*Powered by Trailhead Tactical Trail Computer*\n\n"
-            response += f"What an absolute journey! 🏔️ Just finished an intense trek covering **{total_dist} km** with **{ele_gain} m** of vertical climb! Here is the live play-by-play of how it went down:\n\n"
+            response += f"What an absolute journey! 🏔️ Just finished an intense trek covering **{total_dist} km** with **{ele_gain} m** of vertical climb! "
+            response += f"The altitude range profile spanned from **{alt_range}**, offering challenging terrain but rewarding views.\n\n"
             
-            milestones = []
-            for am in amenities:
-                milestones.append(("amenity", am["km"], am))
-            for log in voice_logs:
-                milestones.append(("log", log["km"], log))
-            milestones = sorted(milestones, key=lambda x: x[1])
+            response += "### 🥾 The Journey & Resource Milestones\n"
+            response += "Setting off, the trail presented a rugged path but was well-equipped for resource management. "
+            if water_count > 0 or camp_count > 0 or other_count > 0:
+                parts = []
+                if water_count > 0:
+                    parts.append(f"{water_count} drinking water and fountain stations")
+                if camp_count > 0:
+                    parts.append(f"{camp_count} campsite/shelter areas")
+                if other_count > 0:
+                    parts.append(f"{other_count} other points of interest")
+                response += f"Along the way, I passed through **{', '.join(parts)}** situated conveniently off the path, ensuring hydration and safety were never compromised. "
+            response += "Navigating these waypoints required careful planning, but it paid off beautifully.\n\n"
             
-            for m_type, km, data in milestones:
-                if m_type == "amenity":
-                    response += f"📍 **Km {km:.2f} | Amenity Spot** 🎒\n"
-                    response += f"Encountered **{data['name']}** ({data['type']}) situated just {data['offset']}m off the path. A crucial waypoint for resource management!\n\n"
-                elif m_type == "log":
-                    transcript_lower = data['transcript'].lower()
+            if voice_logs:
+                response += "### 🎙️ Trail Reflections & Audio Log Highlights\n"
+                for log in voice_logs:
+                    transcript_lower = log['transcript'].lower()
                     icon = "🎙️"
-                    title = "Hiker Log"
-                    if "water" in transcript_lower:
+                    title = "Trail Observation"
+                    if "water" in transcript_lower or "waterfall" in transcript_lower:
                         icon = "💧"
                         title = "Water Source & Hydration Check"
-                    elif "view" in transcript_lower or "point of view" in transcript_lower:
+                    elif "view" in transcript_lower or "scenic" in transcript_lower:
                         icon = "👁️"
                         title = "Scenic Viewpoint Reflection"
                     elif "finish" in transcript_lower or "complete" in transcript_lower:
                         icon = "🏁"
                         title = "Trek Completion Signoff"
-                        
-                    response += f"{icon} **Km {km:.2f} | {title}** 📝\n"
-                    response += f"Recorded voice entry at {data['alt']}m altitude:\n"
-                    response += f"> *\"{data['transcript']}\"*\n\n"
                     
+                    response += f"{icon} **Km {log['km']:.2f} | {title}** 📝\n"
+                    response += f"Recorded voice entry at {log['alt']}m altitude:\n"
+                    response += f"> *\"{log['transcript']}\"*\n\n"
+            
             response += "🏁 **Trek Complete!**\n"
             response += "Every step was worth it. Pushed my limits, managed my resources, and conquered the route. 🥾\n\n"
             response += "---\n"
@@ -455,8 +465,8 @@ def generate_llama_cpp(prompt, system="", image_path=None, audio_path=None, hist
             return
 
         init_duration = time.time() - start_time
-        if init_duration > 35.0:
-            print(f"[llm.py] Warning: Model loading took {init_duration:.2f}s (exceeded 35s limit). Disabling llama_cpp and falling back to mock backend.")
+        if init_duration > 120.0:
+            print(f"[llm.py] Warning: Model loading took {init_duration:.2f}s (exceeded 120s limit). Disabling llama_cpp and falling back to mock backend.")
             generate_llama_cpp.disabled = True
             for chunk in generate_mock(prompt, system, image_path, audio_path, history):
                 yield chunk
@@ -471,26 +481,38 @@ def generate_llama_cpp(prompt, system="", image_path=None, audio_path=None, hist
         if image_path:
             prompt = f"[📸 Image uploaded] {prompt}"
 
-        formatted_prompt = f"<|im_start|>system\n{system}<|im_end|>\n"
+        messages = []
+        combined_prompt = prompt
+        if system:
+            combined_prompt = f"System Instructions:\n{system}\n\nUser Query: {prompt}"
+            
         if history:
+            first_msg_updated = False
             for msg in history:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
-                formatted_prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
-        formatted_prompt += f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-        
-        print(f"\n--- [llama.cpp INPUT PROMPT] ---\n{formatted_prompt}\n--------------------------------")
+                if role == "system":
+                    continue
+                if not first_msg_updated and role == "user":
+                    content = f"System Instructions:\n{system}\n\nUser Query: {content}"
+                    first_msg_updated = True
+                messages.append({"role": role, "content": content})
+            messages.append({"role": "user", "content": prompt})
+        else:
+            messages.append({"role": "user", "content": combined_prompt})
+            
+        print(f"\n--- [llama.cpp INPUT MESSAGES] ---\n{messages}\n--------------------------------")
         print("--- [llama.cpp STREAMING RESPONSE] ---")
         try:
-            response = model(
-                formatted_prompt,
+            response = model.create_chat_completion(
+                messages=messages,
                 max_tokens=512,
                 temperature=0.3,
                 top_p=0.9,
                 stream=True
             )
             
-            first_token_timeout = 30.0
+            first_token_timeout = 120.0
             response_iter = iter(response)
             
             first_chunk_start = time.time()
@@ -511,16 +533,14 @@ def generate_llama_cpp(prompt, system="", image_path=None, audio_path=None, hist
                 yield voice_prefix
                 
             if first_chunk:
-                text = first_chunk['choices'][0]['text']
-                cleaned = text.replace("<|im_end|>", "")
-                print(cleaned, end="", flush=True)
-                yield cleaned
+                text = first_chunk['choices'][0]['delta'].get('content', '')
+                print(text, end="", flush=True)
+                yield text
 
             for chunk in response_iter:
-                text = chunk['choices'][0]['text']
-                cleaned = text.replace("<|im_end|>", "")
-                print(cleaned, end="", flush=True)
-                yield cleaned
+                text = chunk['choices'][0]['delta'].get('content', '')
+                print(text, end="", flush=True)
+                yield text
             print("\n--------------------------------------")
         except Exception as e:
             print(f"[llm.py] Error running llama.cpp: {e}. Falling back to mock.")

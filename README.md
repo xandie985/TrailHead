@@ -4,8 +4,8 @@ emoji: 🌲
 colorFrom: green
 colorTo: blue
 sdk: gradio
-sdk_version: 5.15.0
-python_version: 3.11
+sdk_version: 6.18.0
+python_version: "3.10"
 app_file: app.py
 pinned: false
 ---
@@ -60,15 +60,20 @@ graph TD
 * **Live HUD Dashboard:** Telemetry tracking route completion percentage, cumulative distance hiked, current altitude, and next-checkpoint ETA.
 * **Offline Proximity Alerts:** Audio-visual indicators triggered automatically when the hiker is within 150m of any filtered POI.
 
-### 3. Contextual Wilderness Guide AI & First-Aid RAG
-* **Wilderness First-Aid Manual:** Formulated manual (`first_aid_guide.json`) containing 5 key backcountry sections (bleeding, hypothermia, heat stroke, altitude illness, musculoskeletal injuries).
-* **Keyword RAG Search:** Local keyword intersection retriever indexes the guide and returns relevant instructions citing specific manual sections.
-* **In-Process LLM:** Powered by local GGUF models running via `llama-cpp-python`.
-* **Proximity Checkpoint Narration:** Provides terrain updates, safety advice, and target destination briefings as you approach checkpoints.
+### 3. Unified Wilderness Guide & First-Aid AI
+* **Unified Chatbot Interface:** Merges the **Wilderness Guide AI** and **Wilderness First-Aid manual** query engine into a single chatbot interface.
+* **Emergency Quick-Lookup:** Column layout integrates a sidebar with the offline Emergency Card and a Manual Quick Search accordion for instant access.
+* **Robust Local LLM Processing:** Configured with a `120s` timeout threshold to prevent premature mock fallback during heavy local prompt prefilling.
+* **Keyword RAG Search:** Local keyword intersection retriever indexes the manual (`first_aid_guide.json`) and guides the local `gemma-2b-it` LLM model to return highly grounded first-aid instructions with manual citations.
+* **Proximity Checkpoint Narration:** Delivers terrain updates, safety advice, and target destination briefings as hikers approach landmarks.
 
-### 4. Offline Voice Journal & Post-Trek Reports
-* **ASR Voice Logs:** Dictate logs hands-free in the cold using `pywhispercpp` (whisper.cpp tiny). Logs transcribing audio, time, and coordinates are saved directly to SQLite.
-* **Post-Trek Storyteller:** Converts your journal entries and raw GPS points into an AI-narrated story artifact.
+### 4. Live GPS Tracking & 1s Updates
+* **1-Second Updates:** Configured GPS tracking refresh interval to 1s, enabling high-resolution position updates on the trail.
+* **Active Proximity POI Highlights:** Automatically detects and highlights close Points of Interest (POIs) near the hiker's current coordinates in the Active Proximity Alerts panel.
+
+### 5. Offline Voice Journal & Post-Trek Reports
+* **ASR Voice Logs:** Dictate logs hands-free in the cold using whisper.cpp tiny. Logs transcribing audio, time, and coordinates are saved directly to SQLite.
+* **Post-Trek Storyteller:** Converts journal entries and raw GPS points into an engaging, non-technical first-person narrative (optimized for social media sharing) without listing raw coordinates.
 
 ---
 

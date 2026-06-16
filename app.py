@@ -25,6 +25,17 @@ MAP_HTML_INITIALIZER = """
 
 MAP_INIT_JS = r"""
 () => {
+    // Hide communication textboxes instantly
+    var hideElements = function() {
+        ['hiker-pos-coords', 'live-gps-coords', 'route-data-json'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.style.setProperty("display", "none", "important");
+        });
+    };
+    hideElements();
+    var hideInterval = setInterval(hideElements, 50);
+    setTimeout(function() { clearInterval(hideInterval); }, 4000);
+
     // 1. Dynamically append Leaflet CSS
     if (!document.getElementById("leaflet-css")) {
         var link = document.createElement("link");
@@ -386,7 +397,7 @@ MAP_INIT_JS = r"""
                     window.gpsWatchId = navigator.geolocation.watchPosition(
                         function(position) {
                             var now = Date.now();
-                            if (now - window.lastGpsTime < 5000) return;
+                            if (now - window.lastGpsTime < 1000) return;
                             window.lastGpsTime = now;
                             
                             var lat = position.coords.latitude;
@@ -417,7 +428,7 @@ MAP_INIT_JS = r"""
                         },
                         {
                             enableHighAccuracy: true,
-                            maximumAge: 5000,
+                            maximumAge: 1000,
                             timeout: 15000
                         }
                     );
@@ -1429,10 +1440,9 @@ def handle_generate_story(route_state_val, style):
         f"Format Style: {style_instruction}\n"
         "Emphasize the hiker's voice notes, detailing their personal reflections, physical state, and "
         "wilderness observations. Incorporate the trek details (distance, elevation, altitude) to frame the physical challenge. "
-        "Weave in the amenities (water sources, campsites, alpine huts, shelters, viewpoints) as milestones or locations where the hiker is resting, "
-        "refilling water, or finding shelter.\n"
+        "Synthesize the encountered amenities (water sources, campsites, alpine huts, shelters, viewpoints) naturally in a non-technical, "
+        "cohesive narrative flow rather than listing every single route coordinate or waypoint. Do not list every milestone or amenity one-by-one. "
         "Do not invent external landmarks, voice notes, or major events not provided. Keep the tone rugged, epic, and highly tactical. "
-        "Organize the story using headings corresponding to distance milestones.\n"
         "At the end, sign off as 'Trailhead AI Storyteller'."
     )
     
@@ -1460,13 +1470,13 @@ Please write a cohesive first-person adventure story of my trek."""
     return story, story_file
 
 # --- Gradio Blocks UI ---
-with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Computer") as demo:
+with gr.Blocks(title="Trailhead — Tactical Trail Computer") as demo:
     route_state = gr.State(None)
     null_state = gr.State(None)
     current_point_idx = gr.State(0)
-    hiker_pos_coords = gr.Textbox(visible=False, elem_id="hiker-pos-coords")
-    live_gps_coords = gr.Textbox(visible=False, elem_id="live-gps-coords")
-    route_data_json = gr.Textbox(visible=False, elem_id="route-data-json")
+    hiker_pos_coords = gr.Textbox(visible=True, elem_id="hiker-pos-coords")
+    live_gps_coords = gr.Textbox(visible=True, elem_id="live-gps-coords")
+    route_data_json = gr.Textbox(visible=True, elem_id="route-data-json")
     
     hiker_pos_coords.change(
         fn=None,
@@ -1580,36 +1590,34 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 checkpoint_table = gr.DataFrame(
                     headers=["Checkpoint", "Coordinates", "Cumulative Distance", "Altitude"],
                     datatype=["str", "str", "str", "str"],
-                    col_count=(4, "fixed")
+                    column_count=(4, "fixed")
                 )
                 
-        with gr.TabItem("🩺 Wilderness First-Aid"):
+        with gr.TabItem("💬 Wilderness Guide & First-Aid AI"):
             with gr.Row():
+                with gr.Column(scale=2):
+                    # Dynamically configure chatbot to use "messages" type if on Gradio 5
+                    gradio_version = getattr(gr, "__version__", "5.0.0")
+                    if gradio_version.startswith("6"):
+                        chatbot_component = gr.Chatbot()
+                    else:
+                        chatbot_component = gr.Chatbot(type="messages")
+                        
+                    gr.ChatInterface(
+                        respond,
+                        chatbot=chatbot_component,
+                        examples=[
+                            "What gear checklist do I need for a 3-day high-altitude trek?",
+                            "How do I treat a sprained ankle on the trail?",
+                            "What is Naismith's Rule for calculating hiking time?"
+                        ]
+                    )
                 with gr.Column(scale=1):
-                    gr.HTML(EMERGENCY_CARD)
-                with gr.Column(scale=1):
-                    gr.Markdown("## 🔍 Wilderness First-Aid manual RAG Search")
-                    rag_query = gr.Textbox(placeholder="What symptoms or injury do you want to query?", label="Query Symptoms")
-                    rag_search_btn = gr.Button("Search manual", variant="primary")
-                    rag_output = gr.Markdown(value="*Manual results will be displayed here.*")
-                    
-        with gr.TabItem("💬 Wilderness Guide AI"):
-            # Dynamically configure chatbot to use "messages" type if on Gradio 5
-            gradio_version = getattr(gr, "__version__", "5.0.0")
-            if gradio_version.startswith("6"):
-                chatbot_component = gr.Chatbot()
-            else:
-                chatbot_component = gr.Chatbot(type="messages")
-                
-            gr.ChatInterface(
-                respond,
-                chatbot=chatbot_component,
-                examples=[
-                    "What gear checklist do I need for a 3-day high-altitude trek?",
-                    "How do I treat a sprained ankle on the trail?",
-                    "What is Naismith's Rule for calculating hiking time?"
-                ]
-            )
+                    gr.Markdown(EMERGENCY_CARD)
+                    with gr.Accordion("🔍 First-Aid Manual Quick Search", open=False):
+                        rag_query = gr.Textbox(placeholder="What symptoms or injury do you want to query?", label="Query Symptoms")
+                        rag_search_btn = gr.Button("Search manual", variant="primary")
+                        rag_output = gr.Markdown(value="*Manual results will be displayed here.*")
 
         with gr.TabItem("🎙️ Voice Journal & Reports"):
             with gr.Row():
@@ -1629,7 +1637,9 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                     journal_logs_table = gr.DataFrame(
                         headers=["Timestamp", "Coordinates", "Distance Hiked", "Transcript"],
                         datatype=["str", "str", "str", "str"],
-                        value=[]
+                        value=[],
+                        column_widths=["22%", "20%", "18%", "40%"],
+                        elem_id="journal-logs-table"
                     )
                     
             gr.Markdown("---")
@@ -1799,8 +1809,8 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     try:
-        demo.launch(server_name="0.0.0.0", server_port=port)
+        demo.launch(server_name="0.0.0.0", server_port=port, css="assets/custom.css")
     except OSError:
         print(f"[app] Port {port} is busy. Falling back to automatic port selection...")
-        demo.launch(server_name="127.0.0.1")
+        demo.launch(server_name="127.0.0.1", css="assets/custom.css")
 
