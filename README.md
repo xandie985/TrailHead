@@ -15,11 +15,13 @@ pinned: false
 [![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+![alt text](media/main-page.gif)
+
 > **"Plan online at basecamp, trek offline on the trail."**
 
 **Trailhead** is an offline-first, mobile-friendly trail computer and navigation assistant designed for wilderness hiking and backpacking. It parses GPX files, calculates smoothed elevation profiles, generates interactive offline maps, and leverages an in-process Large Language Model (LLM) and Speech-to-Text (ASR) to guide you safely through the backcountry without relying on cellular connection.
 
----
+---   
 
 ## 🧭 System Architecture
 
@@ -51,6 +53,8 @@ graph TD
 * **Enhanced GPX Export:** Saves fetched POIs into standard GPX `<extensions>` and `<wpt>` tags to be stored on disk and read offline.
 
 ### 2. Tactical HUD, Live GPS & Trek Simulation
+![alt text](media/gps-trail-head.gif)
+
 * **Live GPS Tracking:** Uses client-side browser Geolocation API (`getCurrentPosition` & `watchPosition`) to plot real-time coordinates. Renders a pulsing blue Google Maps-style location marker with a shaded accuracy circle.
 * **Smart Auto-Zoom:** Dynamically scales map zoom levels using Leaflet `fitBounds` to display both the predefined route path and the hiker's live position simultaneously.
 * **Unified Trek Controls:** The `▶ START` button serves a dual purpose: if GPS is enabled, it initiates live tracking and locks/centers position updates (throttled at 5 seconds to conserve battery); otherwise, it runs the time-lapse simulation. `⏸ PAUSE` freezes updates, and `🔄 RESET` clears status and restores initial layout.
@@ -61,6 +65,7 @@ graph TD
 * **Offline Proximity Alerts:** Audio-visual indicators triggered automatically when the hiker is within 150m of any filtered POI.
 
 ### 3. Unified Wilderness Guide & First-Aid AI
+![alt text](media/image-1.png)
 * **Unified Chatbot Interface:** Merges the **Wilderness Guide AI** and **Wilderness First-Aid manual** query engine into a single chatbot interface.
 * **Emergency Quick-Lookup:** Column layout integrates a sidebar with the offline Emergency Card and a Manual Quick Search accordion for instant access.
 * **Robust Local LLM Processing:** Configured with a `120s` timeout threshold to prevent premature mock fallback during heavy local prompt prefilling.
@@ -72,6 +77,7 @@ graph TD
 * **Active Proximity POI Highlights:** Automatically detects and highlights close Points of Interest (POIs) near the hiker's current coordinates in the Active Proximity Alerts panel.
 
 ### 5. Offline Voice Journal & Post-Trek Reports
+![alt text](media/image-2.png)
 * **ASR Voice Logs:** Dictate logs hands-free in the cold using whisper.cpp tiny. Logs transcribing audio, time, and coordinates are saved directly to SQLite.
 * **Post-Trek Storyteller:** Converts journal entries and raw GPS points into an engaging, non-technical first-person narrative (optimized for social media sharing) without listing raw coordinates.
 
