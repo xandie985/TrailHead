@@ -1470,7 +1470,7 @@ Please write a cohesive first-person adventure story of my trek."""
     return story, story_file
 
 # --- Gradio Blocks UI ---
-with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Computer") as demo:
+with gr.Blocks(title="Trailhead — Tactical Trail Computer") as demo:
     route_state = gr.State(None)
     null_state = gr.State(None)
     current_point_idx = gr.State(0)
@@ -1590,7 +1590,7 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
                 checkpoint_table = gr.DataFrame(
                     headers=["Checkpoint", "Coordinates", "Cumulative Distance", "Altitude"],
                     datatype=["str", "str", "str", "str"],
-                    col_count=(4, "fixed")
+                    column_count=(4, "fixed")
                 )
                 
         with gr.TabItem("💬 Wilderness Guide & First-Aid AI"):
@@ -1809,8 +1809,8 @@ with gr.Blocks(css="assets/custom.css", title="Trailhead — Tactical Trail Comp
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     try:
-        demo.launch(server_name="0.0.0.0", server_port=port)
+        demo.launch(server_name="0.0.0.0", server_port=port, css="assets/custom.css")
     except OSError:
         print(f"[app] Port {port} is busy. Falling back to automatic port selection...")
-        demo.launch(server_name="127.0.0.1")
+        demo.launch(server_name="127.0.0.1", css="assets/custom.css")
 
