@@ -3,8 +3,9 @@
 | | |
 |---|---|
 | **Repository** | `xandie985/TrailHead` (branch `main`, last commit 2026-06-16, 53 commits, 1 contributor) |
-| **Report date** | 2026-10-08 |
+| **Report date** | 2026-10-08 (updated 2026-10-09: added D13–D14; re-scoped §9–§12 to the two-track plan) |
 | **Purpose** | Baseline for adding features/enhancements and producing an Android APK |
+| **Roadmap** | The project now has two tracks: this repo as the **Hugging Face showcase**, and a separate open-source **Android + web app**. Future work, the market-gap analysis and the data/licensing constraints are in [`ROADMAP.md`](ROADMAP.md). |
 | **How this was produced** | Full read of all Python/JS/CSS source, plus a scratch-venv run of the app (Gradio 6.18.0 on Python 3.13). Items marked **[verified]** were executed; items marked **[read]** come from reading code only. |
 
 ---
@@ -34,9 +35,9 @@ Trailhead is a single-process **Python/Gradio web app** that acts as a "trail co
 
 **Top-line recommendations**
 
-1. Fix the 6 concrete defects in §8 (≈1 day) — one of them makes the first-aid tool unsafe when the LLM is absent.
-2. Make "offline" real: self-host Leaflet/fonts/tiles and fix tile serving (≈1–2 days).
-3. For the APK: a Gradio server cannot simply be "wrapped" and stay offline. Recommended path is a **staged approach** (§10): a quick Capacitor/TWA demo APK first, then a client-side re-architecture (Leaflet + local DB + on-device LLM/ASR plugins) for the true offline APK.
+1. Fix the concrete defects in §8 (≈1–2 days). One makes the first-aid tool unsafe when the LLM is absent. D13 breaks the OSM tile usage policy, and D14 leaks one visitor's data to others on a public Space.
+2. Make "offline" real for the showcase: self-host Leaflet, fonts and tiles from a source that permits offline use, and fix tile serving (≈1–2 days).
+3. For Android: a Gradio server cannot simply be "wrapped" and stay offline. **Decision (2026-10-09):** keep the Gradio app as the HF showcase and build the Android + web app as a separate client-side, offline-first product. See §10 and [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
@@ -264,38 +265,78 @@ Single developer; feature branches (`dev_skeleton_and_features`, `dev_final_feat
 | D10 | Low | `requirements.txt`: `gradio[oauth,mcp]` extras unused; `llama-cpp-python==0.2.79`, `pywhispercpp`, `miniaudio` are hard requirements though documented as optional (installing on a machine without a compiler fails the whole install); `folium` only used by legacy path. | `requirements.txt` |
 | D11 | Low | No tests/CI; test scripts need network and one has a hard-coded `C:\Users\…` path. Repo is 29 MB, mostly README GIFs in git history. | `test_overpass.py:6` |
 | D12 | Low | Unit inconsistency (m vs km) across `cum_dist` fields; proximity radius, walking speed (1.38 m/s), checkpoint interval are magic numbers. | throughout |
+| **D13** | High (compliance) | **Tile prefetch breaks the OSM tile usage policy.** `download_tiles_for_bbox` bulk-downloads z13–16 tiles from `tile.openstreetmap.org` in a background thread for offline use. OSMF's policy does not permit offline use or prefetching on that server, and offending clients can be blocked without notice. The 43 bundled tiles came from the same source. Fix: serve tiles built from an ODbL extract (e.g. a Protomaps PMTiles extract) or from a provider that allows offline use. Also drop the deprecated `{s}.` subdomains in the live layer. | `src/gpx_parser.py:526-584`, `app.py:73,83` **[read]** |
+| **D14** | High (privacy, public Space) | **All visitors share one database.** `get_journal_entries()` / `get_custom_waypoints()` return every row, and the clear buttons delete every row. On a public HF Space, any visitor can see other visitors' journal transcripts and the GPS coordinates stored with them, and can wipe them. Fix: key rows by a per-session/browser ID, or keep showcase data in session state only. | `src/database.py`; `app.py:858,918,1283,1323,1366-1377` **[read]** |
 
 ---
 
 ## 9. Enhancement backlog
 
-**P0 — stabilise (≈2–3 days)**
-1. Fix D1; add `import json` at module top; refresh table/JSON after clear.
-2. Make offline real: vendor Leaflet + fonts into `assets/`; serve tiles from a FastAPI static mount (or `allowed_paths` + `/gradio_api/file=`), use relative URLs; set min/max zoom from what was actually downloaded; add UI to pre-download tiles with size estimate/progress.
-3. Make LLM failure explicit: show a visible "AI model unavailable — showing offline manual excerpt" banner; in the mock/fallback path return the **retrieved manual text verbatim** instead of canned text; never label canned text "CITED".
-4. Correct README (model name, claims), add LICENSE, remove personal email from UA, restore HF front-matter or document Termux/APK as the main target.
-5. Split `app.py` into `ui/`, `services/`, `static/map.js`; extract one `compute_hud(lat, lon, route)` used by both simulation and GPS.
+> **Re-scoped 2026-10-09.** The work is now split into two tracks, detailed in [`ROADMAP.md`](ROADMAP.md):
+> - **Track S, Showcase:** this repo and Gradio app on Hugging Face Spaces. Kept stable and honest; used to prototype algorithms.
+> - **Track A, App:** a separate open-source Android + web app, offline-first. It addresses the market gaps: verified trail data, reliable offline downloads, battery-aware tracking, multi-day stage planning, clean trek-mode UI, and no paywalls.
+>
+> This section lists only showcase work. Product features moved to `ROADMAP.md` §3 and §6.
 
-**P1 — product features**
-| Feature | Why / sketch |
+**S0 — stabilise and comply (≈3–4 days).** Exit criteria are in `ROADMAP.md` §6.1.
+1. Fix D1: add `import json` at module top, and refresh the table and map JSON after clearing.
+2. **D13 + D2: tiles.**
+   - Stop prefetching from `tile.openstreetmap.org`.
+   - Bundle a small demo-area tile set built from an ODbL extract (Protomaps PMTiles or rasterised).
+   - Serve it via a static mount, or via `allowed_paths` + `/gradio_api/file=` with relative URLs.
+   - Set min/max zoom from what is bundled, and show "© OpenStreetMap contributors".
+3. Vendor Leaflet and fonts into `assets/`.
+4. **D14:** per-session storage, so visitors cannot see or clear each other's journal, waypoints or positions.
+5. **D3:** make LLM failure explicit.
+   - Show a visible "AI model unavailable — showing manual excerpt" banner.
+   - The fallback returns the retrieved manual text verbatim.
+   - Canned text is never labelled "CITED".
+6. **D4–D6.**
+7. Correct the README: model name, claims, and demo vs app scope. Also:
+   - Add LICENSE and restore the HF front-matter.
+   - Remove the email from the User-Agent (D9).
+   - Credit Open-Meteo (CC BY 4.0).
+8. Split `app.py` into `ui/`, `services/` and `static/map.js`. Extract one `compute_hud(lat, lon, route)` for both simulation and GPS (D7).
+9. **Engineering:**
+   - A pytest suite for `gpx_parser`, `rag`, `database` and the snapping/ETA maths, using **golden fixtures**: GPX in, expected JSON out. These fixtures become the shared spec for the app.
+   - GitHub Actions: lint and tests, no network.
+   - Pin dependencies; split `requirements.txt` into `core` / `ai`.
+   - Move README media out of git.
+
+**S1 — demo the product ideas (≈1–2 weeks).**
+- Readiness-check panel.
+- Off-route detection with browser speech alerts.
+- Segment-projection snapping (fixes D4).
+- Drift-filter demo: raw vs filtered.
+- **Multi-day stage planner prototype**, with huts, water and bail-outs per stage.
+- POI provenance badges.
+- Slope-aware ETA.
+- SOS coordinates screen.
+
+**S2 — optional polish.**
+- Local condition-report mock.
+- Precomputed LLM checkpoint briefings.
+- Extractive-first first aid with a smaller model.
+- BM25 / top-k retrieval with citations.
+
+**Where the earlier P1/P2 items went**
+| Earlier item | Now |
 |---|---|
-| **Off-route detection + audible/haptic alert** | Point-to-segment distance to polyline; warn >50 m; "return to trail" bearing/distance |
-| **Segment-projection snapping with direction awareness** | Fixes D4, gives smooth progress; use a moving window around last index |
-| **Track recording + GPX export** | Breadcrumb of real GPS, export a `.gpx` of the actual hike; feeds story generator |
-| **Slope-aware ETA** (Naismith/Tobler) with pace calibration from recorded track | Replaces constant 1.38 m/s |
-| **Trek/session model in SQLite** | `treks`, `route_id`, per-trek journal/waypoints; stop global rows; add indexes/migrations |
-| **LLM-grounded checkpoint briefings** | Actually use the LLM with POIs/ele/slope context; cache per checkpoint at basecamp so nothing heavy runs on trail |
-| **Weather + sunrise/sunset at basecamp** | Open-Meteo forecast cached; "be off-trail by HH:MM" warning |
-| **Water/shelter planning** | Gaps between water sources along the route; warn when next source > X km |
-| **Better RAG** | Larger, cited corpus (WFR-style protocols); BM25 or small embedding model; return top-k with section citations; unit-test retrieval |
-| **Emergency/SOS screen** | Big-button page showing current lat/lon (decimal + DMS/UTM), nearest `phone`/hut POI, copy-able text for rescue call |
-| **Pre-trip checklist/gear generator** | Based on distance, gain, altitude, weather |
-| **Battery saver mode** | Lower GPS rate, pause map animation, disable plot redraw |
-| **Units / language settings** | metric↔imperial; i18n of UI strings |
-
-**P2 — nice to have:** multi-day staging, GPX/KML import of multiple routes, 3-D profile, story → image/PDF share card, photo geotagging, offline DEM instead of Open-Meteo, peer location share via QR/BLE.
-
-**Engineering:** pytest suite for `gpx_parser`, `rag`, `database`, snapping/ETA maths (all pure functions — easy wins); GitHub Actions (lint + tests, no network); pre-commit; pin dependency versions; split `requirements.txt` into `core` / `ai` extras; move README media to Releases/LFS.
+| Off-route detection + alert | S1 (detection, browser speech) · A2 (native, TTS/haptics) |
+| Segment snapping with direction | S1 · A0 (ported via spec) |
+| Track recording + GPX export | A2 (needs background tracking) |
+| Slope-aware ETA | S1 · A0 |
+| Trek/session DB model | S0 (per-session, D14) · A0 (full schema) |
+| LLM checkpoint briefings | S2 · A6 |
+| Weather + sunrise/sunset | A3 (S2 optional) |
+| Water/shelter planning, multi-day staging | S1 prototype · A3 |
+| Better RAG / vetted corpus | S2 · A6 (vetted corpus is a release blocker for AI) |
+| Emergency/SOS screen | S1 · A2 |
+| Pre-trip checklist | A3 |
+| Battery saver mode | A2 (adaptive polling, expedition mode) |
+| Units / i18n | A5 |
+| Offline DEM instead of Open-Meteo | A1 (region packs) |
+| 3-D profile/terrain, peer location share, photo geotagging, share cards | Later (`ROADMAP.md` §3.7) |
 
 ---
 
@@ -313,12 +354,21 @@ Trailhead's backend is Python + native C++ wheels (`llama-cpp-python`, `pywhispe
 | C | **Embed CPython in the APK** (e.g. Chaquopy / BeeWare / python-for-android) running Gradio on `127.0.0.1` + WebView | ✅ | ~90% | 2–4 weeks | Wheel availability for Gradio's native deps on arm64 + Python 3.11–3.13 **(must be verified in a spike)**; APK size; cold-start of Gradio (seconds–10s+); llama.cpp/whisper.cpp must be NDK-cross-compiled; Gradio is heavy for a phone |
 | D | **Client-side re-architecture (recommended end-state)**: Capacitor (or Kotlin + WebView) app; Leaflet + local tiles (MBTiles/PMTiles); SQLite via plugin; GPX/elevation/Naismith/RAG ported to TypeScript; **native plugins** for GPS (background foreground-service), on-device LLM (llama.cpp JNI / MediaPipe LLM Inference / MLC) and ASR (whisper.cpp JNI or offline `SpeechRecognizer`) | ✅ | Algorithms/data/prompt design (not code); the JS map code is largely reusable | 4–8 weeks | LLM model size (≈1.5 GB → on-demand download, not in APK); device RAM; background-location permissions & Play policy |
 
-### 10.3 Recommendation — staged
-1. **M0 (this repo, 2–3 days):** P0 backlog above. Required for any option; D2 and the CDN dependencies must be fixed first.
-2. **M1 – Demo APK via option B (1–2 days):** Capacitor project pointing to the deployed Space/LAN URL; proves signing, install, Geolocation permission in WebView. Label clearly as *online demo*.
-3. **M2 – Time-boxed spike (2–3 days):** try option C (Chaquopy + Gradio import + route load + a `llama.cpp` 0.5–1B model). Go/no-go criteria: app boots < 15 s, route+map work offline, no crash on arm64 mid-range phone.
-4. **M3 – Production APK:** if the spike fails or startup/size is unacceptable, proceed with **option D**, keeping the Python app as the "basecamp/desktop" companion that exports a trek bundle (GPX + POIs + tiles + cached briefings) the phone imports. Even if C passes, D is the better long-term product.
-5. **Release plumbing:** release keystore, `.aab`/`.apk` build in GitHub Actions, in-app model downloader with checksum and resume, crash logging that works offline.
+### 10.3 Decision (2026-10-09), replacing the earlier staged plan
+- **Android is a separate product (Track A),** built client-side from day one. This is option D, refined in `ROADMAP.md` §5:
+  - TypeScript + Capacitor, shipping to Android and web (PWA);
+  - MapLibre GL with PMTiles region packs;
+  - SQLite;
+  - native plugins for background tracking, downloads, offline routing, TTS and optional AI.
+- **Option B is dropped.** The demo-APK role it served (an online shell) is filled by the HF Space showcase.
+- **Option C is dropped.** Track A won't embed the Gradio app, so its feasibility spike is unnecessary.
+- **Option A (Termux)** stays documented for the showcase as a hobbyist path, not a product.
+- **Release plumbing,** carried into A0/A6:
+  - a release keystore;
+  - `.aab`/`.apk` builds in GitHub Actions;
+  - `foss` and `play` build flavours;
+  - pack and model downloads with checksum and resume;
+  - crash logging that works offline (no proprietary SDK in `foss`).
 
 ### 10.4 Build-environment readiness (this cloud session) **[verified]**
 | Tool | Present |
@@ -333,28 +383,31 @@ Foreground-service location tracking with a persistent notification (Android 10+
 
 ---
 
-## 11. Suggested milestone plan
+## 11. Milestone plan
 
-| Milestone | Scope | Exit criteria |
-|---|---|---|
-| **M0 Stabilise** | D1–D6, offline assets, README truth, tests + CI | `pytest` green offline; map renders with network disabled; clear-waypoints works |
-| **M1 Trail-ready web** | Off-route alert, segment snapping, track recording/GPX export, SOS screen, trek/session DB | Field test on a real hike through Termux/phone browser |
-| **M2 Demo APK** | Capacitor shell → hosted app | Installable, signed APK; GPS permission works |
-| **M3 Offline spike** | Option C feasibility | Written go/no-go with measurements |
-| **M4 Offline APK** | Option D (or C if viable): local tiles, SQLite, on-device LLM/ASR, background GPS | Airplane-mode end-to-end trek on a mid-range phone |
-| **M5 Polish** | i18n, units, battery mode, weather/water planning, store listing | Beta release |
+Moved to [`ROADMAP.md` §6](ROADMAP.md#6-milestones). Summary:
 
----
+| Track | Milestones |
+|---|---|
+| **S — Showcase** (this repo) | **S0** stabilise and comply (D1–D6, D13, D14, offline assets, README truth, tests + CI) → **S1** demo the product ideas (readiness check, off-route, drift filter, stage planner) → **S2** optional polish |
+| **A — App** (new repo) | **A0** foundations and spikes → **A1** offline-first core (region packs, download manager, readiness check) → **A2** tracking, navigation and safety → **A3** planning (offline routing, multi-day stages) → **A4** trail truth (provenance, condition reports; needs a backend) → **A5** trek-mode UX → **A6** AI packs and release |
 
 ## 12. Open questions for the maintainer
 
-1. **APK intent:** is a *truly offline* APK required (→ D/C), or is an installable online/LAN demo enough for now (→ B)?
-2. **Target devices:** minimum Android version and RAM? (decides model size: 0.5B/1B vs 2B.)
-3. **Distribution:** sideloaded APK, Play Store, or F-Droid? (affects background-location and model-download policy.)
-4. **LLM scope:** keep Gemma-1.1-2B, or move to a newer small model (Gemma 3/Qwen/Llama-3.2 1–3B) for phone use? First-aid answers need strict grounding; consider extractive-only mode as default.
-5. **Medical liability:** is the first-aid content reviewed by a qualified source? Needs a visible disclaimer and a vetted corpus before wider release.
-6. **Hosting:** keep the Hugging Face Space deployment (restore front-matter/Dockerfile) in parallel with the APK?
-7. **Scope priority:** which of the P1 features matter most for the first release?
+Answered on 2026-10-09:
+- **APK intent:** a truly offline app, built as a separate product.
+- **Hosting:** keep the Hugging Face Space as the showcase.
+- **Scope priority:** the market-gap analysis now drives priorities (`ROADMAP.md` §3).
+
+Still open, with recommendations, in [`ROADMAP.md` §9](ROADMAP.md#9-decisions-needed):
+- repo layout;
+- app licence;
+- beachhead region;
+- Android baseline and reference devices;
+- routing engine;
+- reports backend;
+- first-aid content source;
+- distribution channel.
 
 ---
 *Appendix — commands used to verify:* installed Gradio 6.18.0 + deps in a scratch venv; imported `app`; ran `handle_route_update` on the bundled route; ran `rag.retrieve_first_aid` on sample queries; launched the server and requested the tile URL (404/403); invoked `handle_clear_waypoints` (NameError). LLM/ASR inference, live browser GPS and Overpass/Open-Meteo calls were **not** exercised.
